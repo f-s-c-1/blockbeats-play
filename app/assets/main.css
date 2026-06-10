@@ -428,3 +428,26 @@ p { margin-bottom: 10px; }
   .huge { font-size: 54px; }
   .stage-panel { min-height: 240px; }
 }
+
+/* ── 抢答按钮 ── */
+.buzz-btn {
+  display: block;
+  width: min(240px, 70vw);
+  aspect-ratio: 1;
+  margin: 12px auto;
+  border-radius: 50%;
+  background: var(--red);
+  color: #fff;
+  font-size: 26px;
+  font-weight: 900;
+  box-shadow: 0 8px 0 rgba(0, 0, 0, .35), 0 2px 8px rgba(0, 0, 0, .3);
+}
+.buzz-btn:active { transform: translateY(6px); box-shadow: 0 2px 0 rgba(0, 0, 0, .35); }
+
+/* ── 倒计时 banner：常态主色，最后 10 秒转红闪烁 ── */
+.timer-banner { background: var(--primary); color: var(--primary-ink); }
+.timer-banner.urgent { background: var(--red); color: #fff; animation: timerBlink 1s steps(2) infinite; }
+@keyframes timerBlink { 50% { opacity: .62; } }
+@media (prefers-reduced-motion: reduce) {
+  .timer-banner.urgent { animation: none; }
+}

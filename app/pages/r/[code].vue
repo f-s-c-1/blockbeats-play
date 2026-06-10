@@ -104,9 +104,31 @@ function triggerStageCue() {
   if (import.meta.client) {
     requestAnimationFrame(() => { stagePulse.value = true })
     const nav = navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean }
-    nav.vibrate?.(35)
+    nav.vibrate?.([60, 40, 60])
+    playCue()
   }
   pulseTimer = setTimeout(() => { stagePulse.value = false }, 760)
+}
+
+// 环节切换提示音（PRD §9.3：震动 + 提示音唤起注意）
+let audioCtx: AudioContext | null = null
+function playCue() {
+  try {
+    const Ctx = window.AudioContext || (window as any).webkitAudioContext
+    if (!Ctx) return
+    audioCtx ||= new Ctx()
+    if (audioCtx.state === 'suspended') return // 用户尚未交互，浏览器禁止出声
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(880, audioCtx.currentTime)
+    osc.frequency.setValueAtTime(1175, audioCtx.currentTime + 0.12)
+    gain.gain.setValueAtTime(0.12, audioCtx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3)
+    osc.connect(gain).connect(audioCtx.destination)
+    osc.start()
+    osc.stop(audioCtx.currentTime + 0.3)
+  } catch { /* 不支持音频则静默 */ }
 }
 
 function showNotice(text: string, tone: 'ok' | 'error' = 'ok') {
@@ -129,6 +151,25 @@ function castVote(targetId: string) {
   send({ t: 'vote:cast', targetId })
   showNotice('已提交投票')
 }
+
+function doBuzz() {
+  send({ t: 'buzz' })
+  const nav = navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean }
+  nav.vibrate?.(80)
+}
+
+// 抢答队列（类型化，供模板渲染）
+const buzzList = computed<{ playerId: string; name: string; avatar: string }[]>(() =>
+  pv.value?.stage?.type === 'buzzer' ? (pv.value.stage.content.buzzes || []) : [])
+
+// 我在抢答队列里的名次（0 = 未抢）
+const myBuzzRank = computed(() => buzzList.value.findIndex(b => b.playerId === pv.value?.me.id) + 1)
+
+const timerUrgent = computed(() => {
+  const t = pv.value?.overlays?.timer
+  if (!t || t.paused) return false
+  return t.endsAt - now.value <= 10_000
+})
 
 const teamNameDraft = ref('')
 watch(() => pv.value?.team?.name, (teamName) => {
@@ -181,8 +222,9 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
   <div v-else class="wrap">
     <div v-if="pv?.overlays" class="overlay-bar">
       <div v-if="pv.overlays.announce" class="banner">📢 {{ pv.overlays.announce.text }}</div>
-      <div v-if="pv.overlays.timer" class="banner" style="background:var(--primary);color:var(--primary-ink)">
+      <div v-if="pv.overlays.timer" class="banner timer-banner" :class="{ urgent: timerUrgent }">
         ⏳ {{ remainSec(pv.overlays.timer.endsAt, pv.overlays.timer.paused, pv.overlays.timer.remaining) }}s
+        <span v-if="pv.overlays.timer.paused" class="muted">（已暂停）</span>
       </div>
     </div>
 
@@ -219,6 +261,14 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
         <div class="huge">🔄</div>
         <h1>正在同步身份</h1>
         <p class="muted">如果长时间没有变化，请刷新后重新加入。</p>
+      </div>
+    </div>
+
+    <div v-else-if="pv.ended" class="stage-panel waiting-panel">
+      <div>
+        <div class="huge">🌅</div>
+        <h1>本场活动已结束</h1>
+        <p class="muted">感谢参与草原杯，路上注意安全！</p>
       </div>
     </div>
 
@@ -310,6 +360,27 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
         </template>
       </div>
 
+      <div v-else-if="pv.stage.type === 'buzzer'" class="stage-panel stage-enter waiting-panel" :class="{ pulse: stagePulse }">
+        <div style="width:100%">
+          <div class="stage-kicker">{{ pv.stage.content.title || '抢答' }}</div>
+          <template v-if="myBuzzRank">
+            <div class="huge">{{ myBuzzRank === 1 ? '🥇' : myBuzzRank === 2 ? '🥈' : myBuzzRank === 3 ? '🥉' : '✋' }}</div>
+            <h1 style="text-align:center">你是第 {{ myBuzzRank }} 个</h1>
+            <p class="muted" style="text-align:center">等主持人判定。</p>
+          </template>
+          <template v-else>
+            <button class="buzz-btn" @click="doBuzz">🔔 抢答</button>
+            <p class="muted" style="text-align:center">想到答案就拍下去！</p>
+          </template>
+          <div v-if="buzzList.length" class="panel">
+            <h2>抢答顺序</h2>
+            <div v-for="(b, i) in buzzList" :key="b.playerId" class="score-row">
+              <span>{{ i + 1 }}. {{ b.avatar }} {{ b.name }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div v-else-if="pv.stage.type === 'vote'" class="stage-panel stage-enter" :class="{ pulse: stagePulse }">
         <template v-if="pv.stage.content.notInVote">
           <div class="stage-kicker">投票旁观</div>
@@ -329,10 +400,12 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
           <div class="stage-kicker">投票已提交</div>
           <div class="huge">✅</div>
           <h1 style="text-align:center">已投票</h1>
-          <p class="muted" style="text-align:center">等待主持人公布结果。</p>
+          <p class="muted" style="text-align:center">
+            已投 {{ pv.stage.content.votedCount }}/{{ pv.stage.content.totalVoters }} 人，等待主持人公布结果。
+          </p>
         </template>
         <template v-else>
-          <div class="stage-kicker">匿名投票</div>
+          <div class="stage-kicker">匿名投票 · 已投 {{ pv.stage.content.votedCount }}/{{ pv.stage.content.totalVoters }}</div>
           <h2>你觉得谁是内鬼？</h2>
           <div class="vote-grid">
             <button v-for="c in pv.stage.content.candidates" :key="c.id" class="ghost vote-option" @click="castVote(c.id)">

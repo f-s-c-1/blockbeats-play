@@ -259,6 +259,7 @@ const timerSec = ref(60)
 function pushAnnounce() { send({ t: 'overlay:announce', text: announceText.value || null }) }
 function startTimer() { send({ t: 'overlay:timer', op: 'start', durationSec: timerSec.value }) }
 function pauseTimer() { send({ t: 'overlay:timer', op: 'pause' }) }
+function resumeTimer() { send({ t: 'overlay:timer', op: 'resume' }) }
 function resetTimer() { send({ t: 'overlay:timer', op: 'reset' }) }
 function toggleScoreboard(on: boolean) { send({ t: 'overlay:scoreboard', on }) }
 
@@ -275,6 +276,27 @@ function startCounter() {
   send({ t: 'stage:set', stage: { type: 'counter', visibility: 'C', payload: { title: '计数挑战', count: 0 } } })
 }
 function incCounter() { send({ t: 'stage:action', kind: 'counter+1' }) }
+
+// —— 抢答 ——
+const buzzerTitle = ref('听前奏抢唱')
+function startBuzzer() {
+  send({ t: 'stage:set', stage: { type: 'buzzer', visibility: 'C', payload: { title: buzzerTitle.value || '抢答' } } })
+}
+const buzzes = computed(() =>
+  stage.value?.type === 'buzzer' ? ((stage.value.payload.buzzes || []) as { playerId: string; name: string; avatar: string }[]) : [])
+
+// —— 投票进度 ——
+const votePending = computed(() => {
+  if (stage.value?.type !== 'vote') return []
+  const ballots = (stage.value.payload.ballots || {}) as Record<string, string>
+  const voterIds = (stage.value.payload.voterIds || []) as string[]
+  return voterIds.filter(id => !ballots[id]).map(id => memberName(id))
+})
+
+// —— 结束房间 ——
+function endRoom() {
+  if (confirm('结束本场活动？所有玩家将看到结束页，且无法再加入。')) send({ t: 'room:end' })
+}
 
 // —— 上行通道 ——
 function toggleUplink(open: boolean) { send({ t: 'admin:toggleUplink', open }) }
@@ -342,6 +364,8 @@ function formatTime(ts: number) {
           </button>
           <button class="sm" @click="copyLink">{{ copyState === 'copied' ? '已复制' : '复制链接' }}</button>
           <button class="ghost sm" @click="openJoinPage">打开玩家页</button>
+          <button v-if="room.phase !== 'ended'" class="sm danger" @click="endRoom">结束活动</button>
+          <span v-else class="tag spy">已结束</span>
         </div>
       </div>
 
@@ -559,6 +583,9 @@ function formatTime(ts: number) {
           </div>
         </div>
         <div v-else class="empty-state">暂无投票数据。</div>
+        <p v-if="stage?.type === 'vote' && votePending.length" class="muted">
+          未投票（{{ votePending.length }}）：{{ votePending.join('、') }}
+        </p>
       </section>
     </div>
 
@@ -603,6 +630,18 @@ function formatTime(ts: number) {
             <button class="sm ghost" @click="startCounter">开始计数</button>
             <button class="sm" :disabled="stage?.type !== 'counter'" @click="incCounter">计数 +1</button>
           </div>
+          <div class="section-actions">
+            <input v-model="buzzerTitle" placeholder="抢答标题（如：听前奏抢唱）" />
+            <button class="sm" @click="startBuzzer">{{ stage?.type === 'buzzer' ? '重新抢答' : '开始抢答' }}</button>
+          </div>
+          <div v-if="stage?.type === 'buzzer'" class="grid">
+            <p class="muted">抢答顺序（{{ buzzes.length }} 人）：</p>
+            <div v-for="(b, i) in buzzes" :key="b.playerId" class="score-row">
+              <span>{{ i + 1 }}. {{ b.avatar }} {{ b.name }}</span>
+              <span v-if="i === 0" class="tag info">最快</span>
+            </div>
+            <p v-if="!buzzes.length" class="muted">等待玩家拍下抢答键…</p>
+          </div>
         </div>
       </section>
     </div>
@@ -624,7 +663,8 @@ function formatTime(ts: number) {
           <input v-model.number="timerSec" type="number" min="1" max="3600" />
           <div class="section-actions">
             <button class="sm" @click="startTimer">开始倒计时</button>
-            <button class="sm ghost" @click="pauseTimer">暂停</button>
+            <button v-if="room.overlays.timer?.paused" class="sm" @click="resumeTimer">继续</button>
+            <button v-else class="sm ghost" @click="pauseTimer">暂停</button>
             <button class="sm ghost" @click="resetTimer">清除</button>
           </div>
         </div>

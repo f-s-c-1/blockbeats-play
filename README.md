@@ -27,6 +27,7 @@ http://127.0.0.1:37891/r/房间码
 ## 验证
 
 ```bash
+pnpm test       # reducer 与可见性裁剪单元测试（vitest）
 pnpm typecheck
 pnpm build
 pnpm test:smoke

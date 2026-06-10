@@ -451,3 +451,9 @@ p { margin-bottom: 10px; }
 @media (prefers-reduced-motion: reduce) {
   .timer-banner.urgent { animation: none; }
 }
+
+/* ── 卧底配置行 ── */
+.check-label { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-weight: 700; cursor: pointer; }
+.check-label input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--primary); cursor: pointer; }
+.num-label { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; color: var(--muted); }
+.num-label input[type="number"] { width: 72px; }

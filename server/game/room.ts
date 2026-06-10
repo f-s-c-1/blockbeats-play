@@ -278,20 +278,44 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
 
     case 'undercover:push': {
       const guard = adminOnly(); if (guard) return guard
-      const pair = UNDERCOVER_PAIRS.find(w => w.id === ev.wordPairId)
-      if (!pair) return { ok: false, error: { code: 'notfound', message: '词对不存在' } }
+      // 词对来源：主持人手输的自定义词对优先，否则查词库
+      let civilian: string, spy: string, pairId: string
+      if (ev.custom) {
+        civilian = (ev.custom.civilian || '').trim().slice(0, 20)
+        spy = (ev.custom.spy || '').trim().slice(0, 20)
+        if (!civilian || !spy) return { ok: false, error: { code: 'empty_pair', message: '自定义词对不能为空' } }
+        if (civilian === spy) return { ok: false, error: { code: 'same_pair', message: '平民词和卧底词不能相同' } }
+        pairId = 'custom'
+      } else {
+        const pair = UNDERCOVER_PAIRS.find(w => w.id === ev.wordPairId)
+        if (!pair) return { ok: false, error: { code: 'notfound', message: '词对不存在' } }
+        civilian = pair.civilian; spy = pair.spy; pairId = pair.id
+      }
       const participants = uniqueIds(ev.participantIds).filter(id => {
         const p = findPlayer(s, id)
         return p && !p.kicked
       })
       if (participants.length < 3) return { ok: false, error: { code: 'too_few', message: '谁是卧底至少 3 人' } }
+      const spyCount = Number.isInteger(ev.spyWordCount) ? Math.max(0, ev.spyWordCount) : 1
+      const blankCount = Number.isInteger(ev.blankCount) ? Math.max(0, ev.blankCount!) : 0
+      if (spyCount + blankCount < 1) {
+        return { ok: false, error: { code: 'bad_counts', message: '卧底和白板至少共 1 人' } }
+      }
+      // 平民必须占多数局面才成立，底线是至少留 2 个平民
+      if (spyCount + blankCount > participants.length - 2) {
+        return { ok: false, error: { code: 'bad_counts', message: '卧底+白板太多，至少留 2 名平民' } }
+      }
       const ids = shuffle(participants)
-      const spyCount = Math.max(1, Math.min(ev.spyWordCount, ids.length - 1))
       const assignment: Record<string, string> = {}
-      ids.forEach((id, i) => { assignment[id] = i < spyCount ? pair.spy : pair.civilian })
+      const blankIds: string[] = []
+      ids.forEach((id, i) => {
+        if (i < spyCount) assignment[id] = spy
+        else if (i < spyCount + blankCount) { assignment[id] = ''; blankIds.push(id) }
+        else assignment[id] = civilian
+      })
       s.currentStage = {
         type: 'undercover', visibility: 'A',
-        payload: { assignment, participantIds: participants, out: [], pairId: pair.id, civilian: pair.civilian, spy: pair.spy },
+        payload: { assignment, blankIds, participantIds: participants, out: [], pairId, civilian, spy, spyCount, blankCount },
         startedAt: Date.now(),
       }
       s.phase = 'running'
@@ -580,7 +604,9 @@ function visibleStageContent(s: RoomState, st: RoomState['currentStage'], me: Pl
         : { role: 'guesser', hint: '👀 猜！' }
     case 'A': {
       const inGame = (st.payload.participantIds || []).includes(me.id)
-      return inGame ? { myWord: st.payload.assignment[me.id] } : { notInGame: true }
+      if (!inGame) return { notInGame: true }
+      if ((st.payload.blankIds || []).includes(me.id)) return { isBlank: true }
+      return { myWord: st.payload.assignment[me.id] }
     }
     case 'D': {
       // 投票进度只透出"已投几人"，不透出票数分布

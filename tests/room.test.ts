@@ -78,6 +78,46 @@ describe('可见性裁剪（系统灵魂）', () => {
     expect(outsider.stage?.content.myWord).toBeUndefined()
   })
 
+  it('A 类白板：白板玩家只收到 isBlank，拿不到任何词；发牌人数符合配置', () => {
+    const rt = createRoom('TEST')
+    const ids = joinPlayers(rt, 6)
+    const r = reduce(rt, { t: 'undercover:push', wordPairId: 'wp1', participantIds: ids, spyWordCount: 2, blankCount: 1, actionId: aid() }, ADMIN)
+    expect(r.ok).toBe(true)
+    const pl = rt.state.currentStage!.payload
+    expect(pl.blankIds).toHaveLength(1)
+    const words = Object.values(pl.assignment as Record<string, string>)
+    expect(words.filter(w => w === pl.spy)).toHaveLength(2)
+    expect(words.filter(w => w === pl.civilian)).toHaveLength(3)
+    const blankView = buildPlayerView(rt, pl.blankIds[0])
+    expect(blankView.stage?.content.isBlank).toBe(true)
+    expect(blankView.stage?.content.myWord).toBeUndefined()
+    expect(blankView.stage?.content.assignment).toBeUndefined()
+  })
+
+  it('卧底+白板人数校验：至少 1 人、至少留 2 名平民', () => {
+    const rt = createRoom('TEST')
+    const ids = joinPlayers(rt, 4)
+    const none = reduce(rt, { t: 'undercover:push', wordPairId: 'wp1', participantIds: ids, spyWordCount: 0, blankCount: 0, actionId: aid() }, ADMIN)
+    expect(none.error?.code).toBe('bad_counts')
+    const tooMany = reduce(rt, { t: 'undercover:push', wordPairId: 'wp1', participantIds: ids, spyWordCount: 2, blankCount: 1, actionId: aid() }, ADMIN)
+    expect(tooMany.error?.code).toBe('bad_counts')
+  })
+
+  it('自定义词对：可用主持人手输的词；空词或两词相同被拒', () => {
+    const rt = createRoom('TEST')
+    const ids = joinPlayers(rt, 3)
+    const empty = reduce(rt, { t: 'undercover:push', custom: { civilian: ' ', spy: 'x' }, participantIds: ids, spyWordCount: 1, actionId: aid() }, ADMIN)
+    expect(empty.error?.code).toBe('empty_pair')
+    const same = reduce(rt, { t: 'undercover:push', custom: { civilian: '茶壶', spy: '茶壶' }, participantIds: ids, spyWordCount: 1, actionId: aid() }, ADMIN)
+    expect(same.error?.code).toBe('same_pair')
+    const ok = reduce(rt, { t: 'undercover:push', custom: { civilian: '张总的保温杯', spy: '李总的茶壶' }, participantIds: ids, spyWordCount: 1, actionId: aid() }, ADMIN)
+    expect(ok.ok).toBe(true)
+    expect(rt.state.currentStage!.payload.pairId).toBe('custom')
+    const words = Object.values(rt.state.currentStage!.payload.assignment as Record<string, string>)
+    expect(words.filter(w => w === '李总的茶壶')).toHaveLength(1)
+    expect(words.filter(w => w === '张总的保温杯')).toHaveLength(2)
+  })
+
   it('B 类你比我猜：词只给比划者，且自动起全场倒计时', () => {
     const rt = createRoom('TEST')
     const ids = joinPlayers(rt, 2)

@@ -315,6 +315,14 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
           <h1>本轮你不参与</h1>
           <p class="muted">观察大家描述，等待下一轮任务。</p>
         </template>
+        <template v-else-if="pv.stage.content.isBlank">
+          <div class="stage-kicker">谁是卧底 · 只给你看的身份</div>
+          <h2>你的词</h2>
+          <div class="word-card">
+            <div class="big word">⬜ 白板</div>
+          </div>
+          <p class="muted">你没有词！听别人怎么描述，装作你也有词，别被发现。</p>
+        </template>
         <template v-else>
           <div class="stage-kicker">谁是卧底 · 只给你看的词</div>
           <h2>你的词</h2>

@@ -76,7 +76,8 @@ export type ClientEvent =
   | { t: 'stage:set'; stage: { type: StageType; visibility: Visibility; payload: Record<string, any> }; actionId: string }
   | { t: 'stage:clear'; actionId: string }
   | { t: 'stage:action'; kind: string; targetId?: string; actionId: string }
-  | { t: 'undercover:push'; wordPairId: string; participantIds: string[]; spyWordCount: number; actionId: string }
+  // 词对二选一：wordPairId（词库）或 custom（主持人手输）；blankCount = 白板（没有词的人）数
+  | { t: 'undercover:push'; wordPairId?: string; custom?: { civilian: string; spy: string }; participantIds: string[]; spyWordCount: number; blankCount?: number; actionId: string }
   | { t: 'charades:push'; actorId: string; word: string; durationSec?: number; actionId: string }
   | { t: 'lastman:start'; participantIds?: string[]; actionId: string }
   | { t: 'lastman:eliminate'; targetId: string; actionId: string }

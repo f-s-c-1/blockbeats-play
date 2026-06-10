@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useRoom } from '../composables/useRoom'
 import type { AdminView } from '@shared/types'
-import { UNDERCOVER_PAIRS, CHARADES_WORDS, SPY_TASKS } from '@shared/words'
+import { UNDERCOVER_PAIRS, CHARADES_WORDS, SPY_TASKS, WORD_CATEGORIES, CHARADES_CATEGORIES } from '@shared/words'
 
 const { connected, view, lastError, created, connect, send } = useRoom()
 const phase = ref<'setup' | 'console'>('setup')
@@ -208,7 +208,19 @@ function assignSpies() {
 }
 
 // —— 谁是卧底 ——
+const ucCategory = ref<string>('全部')
+const ucFilteredPairs = computed(() =>
+  ucCategory.value === '全部' ? UNDERCOVER_PAIRS : UNDERCOVER_PAIRS.filter(p => p.category === ucCategory.value))
 const ucPair = ref(UNDERCOVER_PAIRS[0].id)
+// 切分类后若当前选中的词对不在筛选结果里，自动跳到该分类第一个
+watch(ucFilteredPairs, (pairs) => {
+  if (pairs.length && !pairs.some(p => p.id === ucPair.value)) ucPair.value = pairs[0].id
+})
+const ucCustomOn = ref(false)
+const ucCustomCivilian = ref('')
+const ucCustomSpy = ref('')
+const ucSpyCount = ref(1)
+const ucBlankCount = ref(0)
 const ucParts = ref<Set<string>>(new Set())
 function toggleUc(id: string) {
   ucParts.value.has(id) ? ucParts.value.delete(id) : ucParts.value.add(id)
@@ -216,8 +228,19 @@ function toggleUc(id: string) {
 }
 function selectAllUc() { ucParts.value = new Set(members.value.map(m => m.id)) }
 function clearUc() { ucParts.value = new Set() }
+// 平民至少留 2 人，和服务端校验一致
+const ucCountsBad = computed(() =>
+  ucSpyCount.value + ucBlankCount.value < 1 || ucSpyCount.value + ucBlankCount.value > ucParts.value.size - 2)
 function pushUndercover() {
-  send({ t: 'undercover:push', wordPairId: ucPair.value, participantIds: [...ucParts.value], spyWordCount: 1 })
+  send({
+    t: 'undercover:push',
+    ...(ucCustomOn.value
+      ? { custom: { civilian: ucCustomCivilian.value.trim(), spy: ucCustomSpy.value.trim() } }
+      : { wordPairId: ucPair.value }),
+    participantIds: [...ucParts.value],
+    spyWordCount: ucSpyCount.value,
+    blankCount: ucBlankCount.value,
+  })
 }
 function openUndercoverVote() {
   const ids = stage.value?.type === 'undercover'
@@ -227,8 +250,14 @@ function openUndercoverVote() {
 }
 
 // —— 你比我猜 ——
+const chCategory = ref<string>('全部')
+const chFilteredWords = computed(() =>
+  chCategory.value === '全部' ? CHARADES_WORDS : CHARADES_WORDS.filter(w => w.category === chCategory.value))
 const chActor = ref('')
-const chWord = ref(CHARADES_WORDS[0])
+const chWord = ref(CHARADES_WORDS[0].text)
+watch(chFilteredWords, (words) => {
+  if (words.length && !words.some(w => w.text === chWord.value)) chWord.value = words[0].text
+})
 function pushCharades() {
   if (!chActor.value) return
   send({ t: 'charades:push', actorId: chActor.value, word: chWord.value, durationSec: 60 })
@@ -483,13 +512,35 @@ function formatTime(ts: number) {
           <span class="tag">{{ ucParts.size }} 人</span>
         </div>
         <div class="grid">
-          <select v-model="ucPair">
-            <option v-for="p in UNDERCOVER_PAIRS" :key="p.id" :value="p.id">{{ p.civilian }} / {{ p.spy }}</option>
+          <div class="section-actions">
+            <select v-model="ucCategory" :disabled="ucCustomOn">
+              <option value="全部">全部分类（{{ UNDERCOVER_PAIRS.length }} 对）</option>
+              <option v-for="c in WORD_CATEGORIES" :key="c" :value="c">{{ c }}</option>
+            </select>
+            <label class="check-label">
+              <input v-model="ucCustomOn" type="checkbox" /> 自定义词对
+            </label>
+          </div>
+          <select v-if="!ucCustomOn" v-model="ucPair">
+            <option v-for="p in ucFilteredPairs" :key="p.id" :value="p.id">{{ p.civilian }} / {{ p.spy }}</option>
           </select>
+          <div v-else class="section-actions">
+            <input v-model="ucCustomCivilian" placeholder="平民词（如：张总的保温杯）" maxlength="20" />
+            <input v-model="ucCustomSpy" placeholder="卧底词（如：李总的茶壶）" maxlength="20" />
+          </div>
+          <div class="section-actions">
+            <label class="num-label">卧底 <input v-model.number="ucSpyCount" type="number" min="0" max="10" /></label>
+            <label class="num-label">白板 <input v-model.number="ucBlankCount" type="number" min="0" max="10" /></label>
+            <span v-if="ucParts.size >= 3 && ucCountsBad" class="tag spy">至少留 2 名平民</span>
+          </div>
           <div class="section-actions">
             <button class="sm ghost" @click="selectAllUc">全选</button>
             <button class="sm ghost" @click="clearUc">清空</button>
-            <button class="sm" :disabled="ucParts.size < 3" @click="pushUndercover">发词</button>
+            <button
+              class="sm"
+              :disabled="ucParts.size < 3 || ucCountsBad || (ucCustomOn && (!ucCustomCivilian.trim() || !ucCustomSpy.trim()))"
+              @click="pushUndercover"
+            >发词</button>
             <button class="sm ghost" :disabled="!(stage?.type === 'undercover') && ucParts.size < 2" @click="openUndercoverVote">本局投票</button>
           </div>
           <div class="list">
@@ -504,7 +555,8 @@ function formatTime(ts: number) {
           <div v-if="ucAssignment" class="grid">
             <div v-for="(w, id) in ucAssignment" :key="id" class="score-row">
               <span>{{ memberName(id) }}</span>
-              <span class="tag" :class="{ spy: w === stage?.payload.spy }">{{ w }}</span>
+              <span v-if="!w" class="tag info">⬜ 白板</span>
+              <span v-else class="tag" :class="{ spy: w === stage?.payload.spy }">{{ w }}</span>
             </div>
           </div>
         </div>
@@ -522,9 +574,15 @@ function formatTime(ts: number) {
             <option value="">选比划者</option>
             <option v-for="m in members" :key="m.id" :value="m.id">{{ m.avatar }}{{ m.name }}</option>
           </select>
-          <select v-model="chWord">
-            <option v-for="w in CHARADES_WORDS" :key="w" :value="w">{{ w }}</option>
-          </select>
+          <div class="section-actions">
+            <select v-model="chCategory">
+              <option value="全部">全部分类（{{ CHARADES_WORDS.length }} 词）</option>
+              <option v-for="c in CHARADES_CATEGORIES" :key="c" :value="c">{{ c }}</option>
+            </select>
+            <select v-model="chWord">
+              <option v-for="w in chFilteredWords" :key="w.text" :value="w.text">{{ w.text }}</option>
+            </select>
+          </div>
           <button class="sm" :disabled="!chActor" @click="pushCharades">发词给比划者</button>
           <p v-if="stage?.type === 'charades'" class="toast">当前词：{{ stage.payload.word }} · {{ memberName(stage.payload.actorId) }} 比划</p>
         </div>

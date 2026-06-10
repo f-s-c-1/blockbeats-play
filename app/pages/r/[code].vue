@@ -23,6 +23,7 @@ const stagePulse = ref(false)
 const notice = ref<{ text: string; tone: 'ok' | 'error' } | null>(null)
 
 onMounted(() => {
+  disguised.value = localStorage.getItem(DISGUISE_KEY) === '1'
   timer = setInterval(() => { now.value = Date.now() }, 250)
   connect(() => {
     const saved = localStorage.getItem(STORE_KEY)
@@ -36,6 +37,7 @@ onUnmounted(() => {
   if (timer) clearInterval(timer)
   if (pulseTimer) clearTimeout(pulseTimer)
   if (noticeTimer) clearTimeout(noticeTimer)
+  if (tapTimer) clearTimeout(tapTimer)
 })
 
 watch(joined, (j) => {
@@ -157,6 +159,28 @@ function castVote(targetId: string) {
 const peekWord = ref(false)
 const peekSecret = ref(false)
 
+// 内鬼伪装模式：连点自己头像 3 次切换。开启后身份面板按住显示的内容
+// 和普通牧民完全一致（应对"把屏幕给我看"的查岗）。
+// 手势只写在内鬼的秘密面板里；普通人连点无任何反应和提示，不会暴露机制。
+const DISGUISE_KEY = `caoyuan:${code}:disguise`
+const disguised = ref(false)
+let tapCount = 0
+let tapTimer: ReturnType<typeof setTimeout> | undefined
+function onIdentityTap() {
+  tapCount++
+  if (tapTimer) clearTimeout(tapTimer)
+  tapTimer = setTimeout(() => { tapCount = 0 }, 1000)
+  if (tapCount >= 3) {
+    tapCount = 0
+    if (pv.value?.secret?.isSpy) {
+      disguised.value = !disguised.value
+      localStorage.setItem(DISGUISE_KEY, disguised.value ? '1' : '0')
+    }
+  }
+}
+// 面板是否显示内鬼真实内容：是内鬼且未开伪装
+const showSpyContent = computed(() => !!pv.value?.secret?.isSpy && !disguised.value)
+
 function doBuzz() {
   send({ t: 'buzz' })
   const nav = navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean }
@@ -234,7 +258,7 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
     </div>
 
     <div class="player-top">
-      <div class="identity-card">
+      <div class="identity-card" @click="onIdentityTap">
         <span class="em">{{ pv?.me.avatar || avatar }}</span>
         <div>
           <div class="identity-name">{{ pv?.me.name || name || '同步身份中' }}</div>
@@ -302,9 +326,10 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
           @contextmenu.prevent
         >
           <template v-if="peekSecret">
-            <template v-if="pv.secret?.isSpy">
+            <template v-if="showSpyContent">
               <h2>🤫 你是草原内鬼</h2>
-              <p>{{ pv.secret.task || '潜伏到最后别被认出来' }}</p>
+              <p>{{ pv.secret?.task || '潜伏到最后别被认出来' }}</p>
+              <p class="muted">查岗反制：悄悄连点左上角你的头像 3 次，这块会伪装成“普通牧民”；再连点 3 次还原。</p>
             </template>
             <template v-else>
               <h2>🐑 你是普通牧民</h2>
@@ -348,9 +373,10 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
           @contextmenu.prevent
         >
           <template v-if="peekSecret">
-            <template v-if="pv.secret?.isSpy">
+            <template v-if="showSpyContent">
               <h2>🤫 你是草原内鬼</h2>
-              <p>{{ pv.secret.task || '潜伏到最后别被认出来' }}</p>
+              <p>{{ pv.secret?.task || '潜伏到最后别被认出来' }}</p>
+              <p class="muted">查岗反制：悄悄连点左上角你的头像 3 次，这块会伪装成“普通牧民”；再连点 3 次还原。</p>
             </template>
             <template v-else>
               <h2>🐑 你是普通牧民</h2>

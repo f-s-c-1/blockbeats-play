@@ -656,9 +656,10 @@ button.nav-pill:active { transform: none; }
   border-radius: 999px;
   background: rgba(10, 8, 5, .68);
   color: #fff;
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 700;
   white-space: nowrap;
+  will-change: transform; /* 走 GPU 合成，减少移动中的文字抖动模糊 */
   animation: danmakuFly linear forwards;
 }
 @keyframes danmakuFly {

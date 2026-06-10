@@ -131,7 +131,7 @@ function flyDanmaku(text: string) {
     key: `dm_${danmakuSeq++}`,
     text,
     top: 8 + Math.random() * 52,
-    dur: 9 + Math.random() * 4,
+    dur: 16 + Math.random() * 6, // 慢速横穿，宽屏上也能看清
   }
   danmaku.value = [...danmaku.value, item]
   setTimeout(() => { danmaku.value = danmaku.value.filter(d => d.key !== item.key) }, item.dur * 1000 + 500)

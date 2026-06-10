@@ -127,7 +127,8 @@ export default defineWebSocketHandler({
       const pass = (ev.adminPass || '').trim()
       if (!rt.adminPass || !pass || !safeEqual(pass, rt.adminPass)) {
         recordLoginFail(code)
-        return send(peer, { t: 'error', code: 'bad_pass', message: rt.adminPass ? '主持口令错误' : '该房间未设置主持口令，请用原浏览器恢复' })
+        // 统一措辞，不泄露该房间是否设置过口令
+        return send(peer, { t: 'error', code: 'bad_pass', message: '恢复失败：口令错误或该房间未设置主持口令' })
       }
       clearLoginFails(code)
       sessions.set(peer.id, { code, role: 'admin' })

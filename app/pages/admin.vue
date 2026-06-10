@@ -98,6 +98,10 @@ const activeSection = computed(() => {
   }
 })
 
+// 标签页：一次只显示一个环节面板；推进环节时自动跳到对应标签
+const activeTab = ref('members')
+watch(activeSection, (s) => { if (s) activeTab.value = s })
+
 const navItems = [
   { id: 'members', label: '成员' },
   { id: 'draw', label: '抽签' },
@@ -418,13 +422,14 @@ function formatTime(ts: number) {
       </div>
 
       <nav class="nav-strip" aria-label="控制台导航">
-        <a
+        <button
           v-for="item in navItems"
           :key="item.id"
+          type="button"
           class="nav-pill"
-          :class="{ active: activeSection === item.id }"
-          :href="`#${item.id}`"
-        >{{ item.label }}</a>
+          :class="{ active: activeTab === item.id, live: activeSection === item.id && activeTab !== item.id }"
+          @click="activeTab = item.id"
+        >{{ item.label }}</button>
       </nav>
     </header>
 
@@ -437,7 +442,7 @@ function formatTime(ts: number) {
     </div>
 
     <div class="section-grid">
-      <section id="members" class="card">
+      <section v-show="activeTab === 'members'" id="members" class="card">
         <div class="section-head">
           <div>
             <h2>成员与内鬼</h2>
@@ -467,7 +472,7 @@ function formatTime(ts: number) {
         <div v-else class="empty-state">等待参与者扫码加入。</div>
       </section>
 
-      <section id="draw" class="card">
+      <section v-show="activeTab === 'draw'" id="draw" class="card">
         <div class="section-head">
           <div>
             <h2>抽签分组</h2>
@@ -503,7 +508,7 @@ function formatTime(ts: number) {
     </div>
 
     <div class="split-grid">
-      <section id="undercover" class="card">
+      <section v-show="activeTab === 'undercover'" id="undercover" class="card">
         <div class="section-head">
           <div>
             <h2>谁是卧底</h2>
@@ -562,7 +567,7 @@ function formatTime(ts: number) {
         </div>
       </section>
 
-      <section id="charades" class="card">
+      <section v-show="activeTab === 'charades'" id="charades" class="card">
         <div class="section-head">
           <div>
             <h2>你比我猜</h2>
@@ -590,7 +595,7 @@ function formatTime(ts: number) {
     </div>
 
     <div class="split-grid">
-      <section id="lastman" class="card">
+      <section v-show="activeTab === 'lastman'" id="lastman" class="card">
         <div class="section-head">
           <div>
             <h2>拽尾巴淘汰赛</h2>
@@ -622,7 +627,7 @@ function formatTime(ts: number) {
         <div v-else class="empty-state">尚未开始淘汰赛。</div>
       </section>
 
-      <section id="vote" class="card">
+      <section v-show="activeTab === 'vote'" id="vote" class="card">
         <div class="section-head">
           <div>
             <h2>投票与揭晓</h2>
@@ -648,7 +653,7 @@ function formatTime(ts: number) {
     </div>
 
     <div class="split-grid">
-      <section id="score" class="card">
+      <section v-show="activeTab === 'score'" id="score" class="card">
         <div class="section-head">
           <div>
             <h2>积分</h2>
@@ -672,7 +677,7 @@ function formatTime(ts: number) {
         <div v-else class="empty-state">分队后可以开始记分。</div>
       </section>
 
-      <section id="general" class="card">
+      <section v-show="activeTab === 'general'" id="general" class="card">
         <div class="section-head">
           <div>
             <h2>通用环节</h2>
@@ -704,7 +709,7 @@ function formatTime(ts: number) {
       </section>
     </div>
 
-    <section id="overlay" class="card">
+    <section v-show="activeTab === 'overlay'" id="overlay" class="card">
       <div class="section-head">
         <div>
           <h2>常驻 Overlay</h2>
@@ -729,7 +734,7 @@ function formatTime(ts: number) {
       </div>
     </section>
 
-    <section id="inbox" class="card">
+    <section v-show="activeTab === 'inbox'" id="inbox" class="card">
       <div class="section-head">
         <div>
           <h2>收件箱</h2>

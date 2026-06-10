@@ -171,8 +171,8 @@ p { margin-bottom: 10px; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .grid { display: grid; gap: 8px; }
 .stack { display: grid; gap: 12px; }
-.split-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.section-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(300px, .9fr); gap: 12px; align-items: start; }
+/* 标签页模式下面板一次只显示一个，容器恒为单列 */
+.split-grid, .section-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
 .full-width { width: 100%; }
 
 .huge { font-size: 64px; line-height: 1; text-align: center; }
@@ -295,7 +295,8 @@ p { margin-bottom: 10px; }
   margin-top: 10px;
   padding-bottom: 2px;
 }
-.nav-pill {
+.nav-pill,
+button.nav-pill {
   flex: 0 0 auto;
   min-height: 34px;
   padding: 7px 12px;
@@ -305,8 +306,13 @@ p { margin-bottom: 10px; }
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;
+  box-shadow: none;
 }
+button.nav-pill:active { transform: none; }
 .nav-pill.active { border-color: rgba(255, 157, 46, .6); color: #ffd9a8; background: rgba(255, 157, 46, .14); }
+/* 当前环节所在的标签（未选中时）：亮一个小圆点提示主持人 */
+.nav-pill.live { border-color: rgba(255, 210, 63, .5); }
+.nav-pill.live::after { content: ''; width: 6px; height: 6px; margin-left: 5px; border-radius: 50%; background: var(--gold); }
 
 .copy-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
 .copy-row input { min-width: 0; }

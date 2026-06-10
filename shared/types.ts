@@ -1,0 +1,141 @@
+// 草原杯 · 前后端共享类型（对应 PRD §4 状态机 + §7.16 事件契约）
+
+export type Visibility = 'A' | 'B' | 'C' | 'D' | 'E' | 'F'
+export type SecretRole = 'normal' | 'spy'
+
+export type StageType =
+  | 'lobby'
+  | 'draw'
+  | 'undercover'
+  | 'charades'
+  | 'vote'
+  | 'lastman'
+  | 'task'
+  | 'reveal'
+  | 'rulecard'
+  | 'counter'
+  | 'standstill' // 定格/木头人
+
+export interface Player {
+  id: string
+  name: string
+  avatar: string // emoji
+  teamId: string | null
+  secretRole: SecretRole
+  spyTask?: string
+  online: boolean
+  kicked?: boolean
+}
+
+export interface Team {
+  id: string
+  name: string
+  captainId: string | null
+  score: number
+}
+
+// 主环节状态（互斥，全场同一刻只一个）
+export interface StageState {
+  type: StageType
+  visibility: Visibility
+  payload: Record<string, any>
+  startedAt: number
+}
+
+// 常驻 overlay（可叠加，独立于主环节）—— PRD §9.3
+export interface Overlays {
+  timer?: { endsAt: number; paused: boolean; remaining: number } | null
+  announce?: { text: string } | null
+  scoreboard?: boolean // true = 积分榜常驻显示
+}
+
+export interface RoomState {
+  code: string
+  phase: 'lobby' | 'running' | 'ended'
+  currentStage: StageState | null
+  overlays: Overlays
+  members: Player[]
+  teams: Team[]
+  passcode?: string | null
+  maxPlayers: number
+  uplinkOpen: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+// ───────── 客户端 → 服务端事件 ─────────
+export type ClientEvent =
+  | { t: 'room:create'; code?: string; adminName: string; passcode?: string; actionId: string }
+  | { t: 'admin:rejoin'; code: string; adminToken: string; actionId: string }
+  | { t: 'player:join'; code: string; name: string; avatar?: string; passcode?: string; clientId: string; actionId: string }
+  | { t: 'player:rejoin'; code: string; clientId: string; actionId: string }
+  | { t: 'draw:generate'; teamCount: number; balance: boolean; actionId: string }
+  | { t: 'spy:assign'; playerIds: string[]; tasks?: Record<string, string>; actionId: string }
+  | { t: 'team:setName'; teamId: string; name: string; actionId: string }
+  | { t: 'stage:set'; stage: { type: StageType; visibility: Visibility; payload: Record<string, any> }; actionId: string }
+  | { t: 'stage:clear'; actionId: string }
+  | { t: 'stage:action'; kind: string; targetId?: string; actionId: string }
+  | { t: 'undercover:push'; wordPairId: string; participantIds: string[]; spyWordCount: number; actionId: string }
+  | { t: 'charades:push'; actorId: string; word: string; durationSec?: number; actionId: string }
+  | { t: 'lastman:start'; participantIds?: string[]; actionId: string }
+  | { t: 'lastman:eliminate'; targetId: string; actionId: string }
+  | { t: 'lastman:revive'; targetId: string; actionId: string }
+  | { t: 'lastman:finish'; actionId: string }
+  | { t: 'vote:open'; candidateIds?: string[]; actionId: string }
+  | { t: 'vote:cast'; targetId: string; actionId: string }
+  | { t: 'vote:revealCount'; actionId: string }
+  | { t: 'vote:revealSpy'; actionId: string }
+  | { t: 'score:adjust'; teamId: string; delta: number; multiplier?: 1 | 2; actionId: string }
+  | { t: 'overlay:timer'; op: 'start' | 'pause' | 'reset'; durationSec?: number; actionId: string }
+  | { t: 'overlay:announce'; text: string | null; actionId: string }
+  | { t: 'overlay:scoreboard'; on: boolean; actionId: string }
+  | { t: 'admin:toggleUplink'; open: boolean; actionId: string }
+  | { t: 'admin:kick'; playerId: string; actionId: string }
+  | { t: 'admin:rename'; playerId: string; newName: string; actionId: string }
+  | { t: 'msg:send'; text: string; stageContext?: string; actionId: string }
+
+// ───────── 服务端 → 客户端事件 ─────────
+export interface AdminInbox {
+  messages: { id: string; fromPlayerId: string; fromName: string; teamId: string | null; text: string; ts: number; stageContext?: string }[]
+}
+
+// 参与者视图（按连接裁剪后的可见内容）
+export interface PlayerView {
+  role: 'player'
+  me: { id: string; name: string; avatar: string; teamId: string | null }
+  waiting: boolean // true = 等待页
+  stage: null | {
+    type: StageType
+    visibility: Visibility
+    content: Record<string, any> // 已裁剪：只含该 player 该看的
+  }
+  overlays: {
+    timer?: { endsAt: number; paused: boolean; remaining: number } | null
+    announce?: { text: string } | null
+    scoreboard?: { teams: { name: string; score: number }[] } | null
+  }
+  uplinkOpen: boolean
+  team?: { id: string; name: string; isCaptain: boolean; members: { name: string; avatar: string }[] }
+  secret?: { isSpy: boolean; task?: string }
+}
+
+// 管理员视图（完整上帝视角 = RoomState + 派生信息 + 收件箱）
+export interface AdminView {
+  role: 'admin'
+  room: RoomState
+  inbox: AdminInbox
+  adminToken?: string
+}
+
+export type ServerEvent =
+  | ({ t: 'room:state' } & (PlayerView | AdminView))
+  | { t: 'joined'; clientId: string; playerId: string }
+  | { t: 'created'; code: string; adminToken: string }
+  | { t: 'kicked' }
+  | { t: 'error'; code: string; message: string }
+
+// 草原主题 emoji 池（PRD §7.2）
+export const AVATAR_POOL = ['🐺', '🦌', '🐎', '🐑', '🦅', '🐫', '🌟', '🔥', '⛺', '🏹', '🍶', '🎪', '🌾', '🐂', '🦬', '🪕']
+
+// 队名备选（PRD 手册）
+export const TEAM_NAME_POOL = ['苍狼队', '白鹿队', '草原雄鹰', '套马汉子', '风车队', '奶茶突击队']

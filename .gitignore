@@ -1,0 +1,11 @@
+node_modules
+.nuxt
+.output
+.data
+dist
+tmp
+*.log
+.DS_Store
+.env
+.env.*
+.claude/settings.local.json

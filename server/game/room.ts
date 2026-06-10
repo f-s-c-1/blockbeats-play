@@ -68,6 +68,7 @@ export function createRoom(code: string, passcode?: string | null): RoomRuntime 
     overlays: {},
     members: [],
     teams: [],
+    teamsRevealed: false,
     passcode: passcode ?? null,
     maxPlayers: 60,
     uplinkOpen: false,
@@ -202,6 +203,8 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
         if (first) t.captainId = first.id
       }
       s.teams = teams
+      // 重新分队 = 新一轮未揭晓，玩家端先不可见（防泄露）
+      s.teamsRevealed = false
       break
     }
 
@@ -249,6 +252,7 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
         }
       }
       if (ev.stage.type === 'buzzer') ev.stage.payload.buzzes = []
+      if (isDrawReveal) s.teamsRevealed = true
       s.currentStage = { ...ev.stage, startedAt: Date.now() }
       s.phase = 'running'
       // 切环节：上行通道自动复位关（PRD §6）
@@ -569,22 +573,24 @@ export function buildPlayerView(rt: RoomRuntime, playerId: string): PlayerView {
   if (!me) return base
   if (s.phase === 'ended') { base.ended = true; return base }
 
+  // 身份常驻（PRD §1：玩家可见 = 自己 + 同队）：
+  // 揭晓分组后，本队信息和自己的内鬼身份在任意环节（含等待页）都附带下发；
+  // 揭晓前一律不可见，防止分队/内鬼指定先泄露。
+  if (s.teamsRevealed) {
+    if (me.teamId) {
+      const team = findTeam(s, me.teamId)
+      const members = s.members.filter(p => p.teamId === me.teamId && !p.kicked).map(p => ({ name: p.name, avatar: p.avatar }))
+      base.team = { id: team?.id || me.teamId, name: team?.name || '我的队', isCaptain: team?.captainId === me.id, members }
+    }
+    if (me.secretRole === 'spy') base.secret = { isSpy: true, task: me.spyTask }
+  }
+
   const st = s.currentStage
   if (!st) return base // 等待页（overlay 仍显示）
 
   base.waiting = false
   const content = visibleStageContent(s, st, me)
   base.stage = { type: st.type, visibility: st.visibility, content }
-
-  // E 类身份分发：附带本队 + 内鬼身份
-  if (st.visibility === 'E' && st.type === 'draw') {
-    if (me.teamId) {
-      const team = findTeam(s, me.teamId)
-      const members = s.members.filter(p => p.teamId === me.teamId).map(p => ({ name: p.name, avatar: p.avatar }))
-      base.team = { id: team?.id || me.teamId, name: team?.name || '我的队', isCaptain: team?.captainId === me.id, members }
-    }
-    if (me.secretRole === 'spy') base.secret = { isSpy: true, task: me.spyTask }
-  }
 
   return base
 }

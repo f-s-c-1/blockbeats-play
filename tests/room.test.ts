@@ -158,6 +158,30 @@ describe('可见性裁剪（系统灵魂）', () => {
     expect(normal.secret).toBeUndefined()
   })
 
+  it('身份常驻：揭晓前看不到队伍/内鬼；揭晓后任何环节（含等待页）都可见；重新分队后复位隐藏', () => {
+    const rt = createRoom('TEST')
+    const ids = joinPlayers(rt, 6)
+    reduce(rt, { t: 'draw:generate', teamCount: 2, balance: false, actionId: aid() }, ADMIN)
+    reduce(rt, { t: 'spy:assign', playerIds: [ids[0]], tasks: { [ids[0]]: '潜伏' }, actionId: aid() }, ADMIN)
+    // 揭晓前：等待页不带队伍/身份（防泄露）
+    let v = buildPlayerView(rt, ids[0])
+    expect(v.team).toBeUndefined()
+    expect(v.secret).toBeUndefined()
+    // 揭晓
+    reduce(rt, { t: 'stage:set', stage: { type: 'draw', visibility: 'E', payload: {} }, actionId: aid() }, ADMIN)
+    // 切回等待页：队伍和内鬼身份仍常驻
+    reduce(rt, { t: 'stage:clear', actionId: aid() }, ADMIN)
+    v = buildPlayerView(rt, ids[0])
+    expect(v.waiting).toBe(true)
+    expect(v.team).toBeTruthy()
+    expect(v.secret).toEqual({ isSpy: true, task: '潜伏' })
+    // 普通玩家看不到任何内鬼信息
+    expect(buildPlayerView(rt, ids[1]).secret).toBeUndefined()
+    // 重新分队：未揭晓状态复位，再次隐藏
+    reduce(rt, { t: 'draw:generate', teamCount: 2, balance: false, actionId: aid() }, ADMIN)
+    expect(buildPlayerView(rt, ids[0]).team).toBeUndefined()
+  })
+
   it('C 类兜底：payload 里误带 assignment/ballots 也会被剔除', () => {
     const rt = createRoom('TEST')
     const ids = joinPlayers(rt, 1)

@@ -273,11 +273,24 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
     </div>
 
     <div v-else-if="pv.waiting" class="stage-panel waiting-panel" :class="{ pulse: stagePulse }">
-      <div>
+      <div style="width:100%">
         <div class="stage-kicker"><span class="dot" :class="connected ? 'on' : 'off'" />待命中</div>
         <div class="huge">⏳</div>
-        <h1>等待主持人</h1>
-        <p class="muted">游戏开始时，这里会自动切换到你的任务。</p>
+        <h1 style="text-align:center">等待主持人</h1>
+        <p class="muted" style="text-align:center">游戏开始时，这里会自动切换到你的任务。</p>
+        <div v-if="pv.team" class="panel">
+          <h2>🎴 {{ pv.team.name }}<span v-if="pv.team.isCaptain" class="tag info" style="margin-left:8px">队长</span></h2>
+          <div class="list">
+            <span v-for="(m, i) in pv.team.members" :key="i" class="member">
+              <span class="em">{{ m.avatar }}</span>{{ m.name }}
+            </span>
+          </div>
+        </div>
+        <div v-if="pv.secret?.isSpy" class="panel" style="border-color:rgba(239,68,68,.55);margin-top:12px">
+          <h2>🤫 你是草原内鬼</h2>
+          <p>{{ pv.secret.task || '潜伏到最后别被认出来' }}</p>
+          <p class="muted">保密！只有你和主持人知道。</p>
+        </div>
       </div>
     </div>
 

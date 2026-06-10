@@ -542,13 +542,25 @@ p { margin-bottom: 10px; }
 @media (max-width: 620px) {
   body { font-size: 15px; }
   .wrap { padding: 12px; }
-  .admin-top { margin: -12px -12px 12px; padding: 10px 12px; }
+  /* 手机上头部不吸顶、全面压缩：把屏幕让给操作区 */
+  .admin-top { position: static; margin: -12px -12px 12px; padding: 8px 12px 10px; }
+  .admin-top-main .muted { display: none; }
+  .top-actions { gap: 6px; }
+  .top-actions button { flex: 1 1 30%; min-height: 36px; padding: 6px 8px; font-size: 13px; }
+  .status-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+  .stat { padding: 5px 8px; }
+  .stat-label { font-size: 10px; }
+  .stat-value { font-size: 14px; }
+  .nav-strip { margin-top: 8px; }
+  .nav-pill { min-height: 30px; padding: 5px 10px; font-size: 12px; }
+  .copy-row { grid-template-columns: 1fr 1fr; }
+  .copy-row input { grid-column: 1 / -1; }
   .card, .panel, .stage-panel { padding: 14px; }
-  .copy-row, .composer-form { grid-template-columns: 1fr; }
+  .composer-form { grid-template-columns: 1fr; }
   .section-head { display: grid; }
   .section-actions { justify-content: flex-start; }
   .score-row { display: grid; }
-  .score-actions button, .section-actions button, .top-actions button { flex: 1 1 auto; }
+  .score-actions button, .section-actions button { flex: 1 1 auto; }
   .emoji-pick { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .player-top { align-items: flex-start; }
   .huge { font-size: 54px; }

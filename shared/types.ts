@@ -57,6 +57,7 @@ export interface RoomState {
   overlays: Overlays
   members: Player[]
   teams: Team[]
+  teamsRevealed: boolean // 抽签是否已揭晓；揭晓后玩家在任意环节都能看到本队成员
   passcode?: string | null
   maxPlayers: number
   uplinkOpen: boolean

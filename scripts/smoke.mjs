@@ -1,7 +1,7 @@
 import WebSocket from 'ws'
 import assert from 'node:assert/strict'
 
-const url = process.env.SMOKE_WS_URL || 'ws://127.0.0.1:37891/ws'
+const url = process.env.SMOKE_WS_URL || 'ws://127.0.0.1:53917/ws'
 let actionSeq = 0
 
 class Client {

@@ -30,6 +30,7 @@ function serialize(rt: RoomRuntime): string {
     state: rt.state,
     inbox: rt.inbox,
     adminToken: rt.adminToken,
+    adminPass: rt.adminPass,
     seenActions: [...rt.seenActions],
     lastMsgAt: rt.lastMsgAt,
   })
@@ -42,6 +43,7 @@ function deserialize(json: string): RoomRuntime {
     state: o.state,
     inbox: o.inbox || { messages: [] },
     adminToken: o.adminToken,
+    adminPass: o.adminPass || null,
     seenActions: new Set(o.seenActions || []),
     lastMsgAt: o.lastMsgAt || {},
   }
@@ -93,9 +95,9 @@ export function roomExists(code: string): boolean {
   return rooms.has(code)
 }
 
-export function newRoom(code: string, passcode?: string | null): RoomRuntime {
+export function newRoom(code: string, passcode?: string | null, adminPass?: string | null): RoomRuntime {
   loadAll()
-  const rt = createRoom(code, passcode)
+  const rt = createRoom(code, passcode, adminPass)
   rooms.set(code, rt)
   persist(code) // 立即落盘
   return rt

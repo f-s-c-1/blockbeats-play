@@ -4,7 +4,7 @@
 import type { Peer } from 'crossws'
 import type { ClientEvent, ServerEvent } from '../../shared/types'
 import { reduce, buildPlayerView, buildAdminView } from '../game/room'
-import { getRoom, newRoom, roomExists, genCode, markDirty } from '../game/manager'
+import { getRoom, newRoom, genCode, markDirty } from '../game/manager'
 
 // 连接绑定的会话信息
 interface Session {
@@ -77,10 +77,37 @@ export default defineWebSocketHandler({
     if (ev.t === 'room:create') {
       const code = ev.code ? normalizeCode(ev.code) : genCode()
       if (!code) return send(peer, { t: 'error', code: 'bad_code', message: '房间码需为 3-8 位英文或数字' })
-      if (roomExists(code)) return send(peer, { t: 'error', code: 'code_taken', message: '房间码已被占用' })
-      const rt = newRoom(code, ev.passcode)
+      // 已结束的房间允许同码重建（释放房间码）；进行中的房间拒绝
+      const existing = getRoom(code)
+      if (existing && existing.state.phase !== 'ended') {
+        return send(peer, { t: 'error', code: 'code_taken', message: '房间码已被占用。若是你创建的，请用原浏览器打开 /admin 自动恢复；或在原控制台点「结束活动」后即可重建' })
+      }
+      const rt = newRoom(code, ev.passcode, ev.adminPass)
       sessions.set(peer.id, { code, role: 'admin' })
       attachPeer(code, peer)
+      send(peer, { t: 'created', code, adminToken: rt.adminToken })
+      send(peer, { t: 'room:state', ...buildAdminView(rt, true) })
+      return
+    }
+
+    // 换设备找回控制台：房间码 + 主持口令（PRD §7.15）
+    if (ev.t === 'admin:login') {
+      const code = normalizeCode(ev.code)
+      if (!code) return send(peer, { t: 'error', code: 'bad_code', message: '房间码格式错误' })
+      const rt = getRoom(code)
+      if (!rt) return send(peer, { t: 'error', code: 'notfound', message: '房间不存在' })
+      const pass = (ev.adminPass || '').trim()
+      if (!rt.adminPass || !pass || pass !== rt.adminPass) {
+        const tries = (badTokenTries.get(peer.id) || 0) + 1
+        badTokenTries.set(peer.id, tries)
+        send(peer, { t: 'error', code: 'bad_pass', message: rt.adminPass ? '主持口令错误' : '该房间未设置主持口令，请用原浏览器恢复' })
+        if (tries >= 5) { try { peer.close(4001, 'too_many_tries') } catch { /* 已断开 */ } }
+        return
+      }
+      badTokenTries.delete(peer.id)
+      sessions.set(peer.id, { code, role: 'admin' })
+      attachPeer(code, peer)
+      // 回发 created：客户端会把 adminToken 存入本地，之后该设备也能断线自动恢复
       send(peer, { t: 'created', code, adminToken: rt.adminToken })
       send(peer, { t: 'room:state', ...buildAdminView(rt, true) })
       return

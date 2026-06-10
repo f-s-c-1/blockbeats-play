@@ -67,8 +67,9 @@ export interface RoomState {
 
 // ───────── 客户端 → 服务端事件 ─────────
 export type ClientEvent =
-  | { t: 'room:create'; code?: string; adminName: string; passcode?: string; actionId: string }
+  | { t: 'room:create'; code?: string; adminName: string; passcode?: string; adminPass?: string; actionId: string }
   | { t: 'admin:rejoin'; code: string; adminToken: string; actionId: string }
+  | { t: 'admin:login'; code: string; adminPass: string; actionId: string } // 换设备凭主持口令找回控制台
   | { t: 'player:join'; code: string; name: string; avatar?: string; passcode?: string; clientId: string; actionId: string }
   | { t: 'player:rejoin'; code: string; clientId: string; actionId: string }
   | { t: 'draw:generate'; teamCount: number; balance: boolean; actionId: string }

@@ -50,6 +50,7 @@ export interface RoomRuntime {
   state: RoomState
   inbox: AdminInbox
   adminToken: string
+  adminPass: string | null // 主持口令：换设备凭「房间码+口令」登录后台（PRD §7.15）
   seenActions: Set<string> // 幂等
   lastMsgAt: Record<string, number> // 私信频率限制
 }
@@ -59,7 +60,7 @@ export type Actor =
   | { role: 'player'; playerId?: string }
 
 // ───────── 创建房间 ─────────
-export function createRoom(code: string, passcode?: string | null): RoomRuntime {
+export function createRoom(code: string, passcode?: string | null, adminPass?: string | null): RoomRuntime {
   const now = Date.now()
   const state: RoomState = {
     code,
@@ -80,6 +81,7 @@ export function createRoom(code: string, passcode?: string | null): RoomRuntime 
     inbox: { messages: [] },
     // 管理员凭证必须不可预测（uid 是时间戳+计数器，可被猜测）
     adminToken: 'admin_' + randomBytes(32).toString('base64url'),
+    adminPass: (adminPass || '').trim().slice(0, 32) || null,
     seenActions: new Set(),
     lastMsgAt: {},
   }
@@ -547,6 +549,7 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
 
     case 'room:create':
     case 'admin:rejoin':
+    case 'admin:login':
       // 在连接层处理，不在此 reducer
       break
   }

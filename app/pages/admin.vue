@@ -7,6 +7,9 @@ const { connected, view, lastError, created, connect, send } = useRoom()
 const phase = ref<'setup' | 'console'>('setup')
 const codeInput = ref('')
 const passcode = ref('')
+const adminPass = ref('')
+const recoverCode = ref('')
+const recoverPass = ref('')
 const origin = ref('')
 const now = ref(Date.now())
 let clock: ReturnType<typeof setInterval> | undefined
@@ -47,7 +50,14 @@ function createRoom() {
     code: codeInput.value.trim().toUpperCase() || undefined,
     adminName: '主持人',
     passcode: passcode.value || undefined,
+    adminPass: adminPass.value.trim() || undefined,
   })
+}
+
+// 换设备凭「房间码 + 主持口令」找回控制台
+function recoverRoom() {
+  if (!recoverCode.value.trim() || !recoverPass.value.trim()) return
+  send({ t: 'admin:login', code: recoverCode.value.trim().toUpperCase(), adminPass: recoverPass.value.trim() })
 }
 
 const av = computed(() => (view.value?.role === 'admin' ? (view.value as AdminView) : null))
@@ -370,10 +380,19 @@ function formatTime(ts: number) {
       <p class="muted">{{ connected ? '已连接' : '连接中…' }}</p>
     </div>
     <div class="card home-shell">
+      <h2>创建房间</h2>
       <input v-model="codeInput" class="code-input" placeholder="房间码（留空自动生成）" maxlength="8" />
-      <input v-model="passcode" placeholder="入场口令（可选）" />
+      <input v-model="passcode" placeholder="玩家入场口令（可选）" />
+      <input v-model="adminPass" type="password" placeholder="主持口令（建议设置，换设备可找回后台）" maxlength="32" />
       <button class="full-width" @click="createRoom">创建房间</button>
       <p v-if="lastError" class="toast error">{{ lastError.message }}</p>
+    </div>
+    <div class="card home-shell">
+      <h2>找回已有房间</h2>
+      <p class="muted">换了设备/浏览器？输入房间码和创建时设置的主持口令。</p>
+      <input v-model="recoverCode" class="code-input" placeholder="房间码" maxlength="8" />
+      <input v-model="recoverPass" type="password" placeholder="主持口令" maxlength="32" @keyup.enter="recoverRoom" />
+      <button class="ghost full-width" :disabled="!recoverCode.trim() || !recoverPass.trim()" @click="recoverRoom">恢复控制台</button>
     </div>
   </div>
 

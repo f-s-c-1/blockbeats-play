@@ -314,6 +314,24 @@ button.nav-pill:active { transform: none; }
 .nav-pill.live { border-color: rgba(255, 210, 63, .5); }
 .nav-pill.live::after { content: ''; width: 6px; height: 6px; margin-left: 5px; border-radius: 50%; background: var(--gold); }
 
+/* 收件箱未读小红点 */
+.nav-pill .badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--red);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  animation: badgePop .25s cubic-bezier(.34, 1.6, .64, 1) both;
+}
+@keyframes badgePop { from { transform: scale(.4); } to { transform: scale(1); } }
+
 .copy-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
 .copy-row input { min-width: 0; }
 .section-head {

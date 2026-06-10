@@ -112,6 +112,12 @@ const activeSection = computed(() => {
 const activeTab = ref('members')
 watch(activeSection, (s) => { if (s) activeTab.value = s })
 
+// 收件箱未读：不在收件箱标签时来了新消息 → 标签上亮红色计数，切过去即清零
+const inboxSeen = ref(0)
+const inboxUnread = computed(() => Math.max(0, inboxMessages.value.length - inboxSeen.value))
+watch(activeTab, (t) => { if (t === 'inbox') inboxSeen.value = inboxMessages.value.length })
+watch(inboxMessages, (msgs) => { if (activeTab.value === 'inbox') inboxSeen.value = msgs.length })
+
 const navItems = [
   { id: 'members', label: '成员' },
   { id: 'draw', label: '抽签' },
@@ -448,7 +454,7 @@ function formatTime(ts: number) {
           class="nav-pill"
           :class="{ active: activeTab === item.id, live: activeSection === item.id && activeTab !== item.id }"
           @click="activeTab = item.id"
-        >{{ item.label }}</button>
+        >{{ item.label }}<span v-if="item.id === 'inbox' && inboxUnread" class="badge">{{ inboxUnread > 99 ? '99+' : inboxUnread }}</span></button>
       </nav>
     </header>
 

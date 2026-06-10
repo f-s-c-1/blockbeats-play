@@ -37,6 +37,24 @@ export function useRoom() {
     }, 10_000)
   }
 
+  // 锁屏/切后台时浏览器冻结页面、连接被掐；回到前台立即唤醒，
+  // 不等心跳周期，最快速度恢复到当前应看到的画面。
+  function wake() {
+    if (disposed) return
+    if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+      connect()
+    } else if (ws.readyState === WebSocket.OPEN) {
+      if (Date.now() - lastMsgAt > 15_000) {
+        try { ws.close() } catch {} // 可疑假死，直接重建
+      } else {
+        try { ws.send(JSON.stringify({ t: 'ping' })) } catch {}
+      }
+    }
+  }
+  const onVisible = () => { if (document.visibilityState === 'visible') wake() }
+  if (import.meta.client) document.addEventListener('visibilitychange', onVisible)
+
   function wsUrl() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     return `${proto}://${location.host}/ws`
@@ -98,6 +116,7 @@ export function useRoom() {
     disposed = true
     if (reconnectTimer) clearTimeout(reconnectTimer)
     if (heartbeat) clearInterval(heartbeat)
+    if (import.meta.client) document.removeEventListener('visibilitychange', onVisible)
     try { ws?.close() } catch {}
   })
 

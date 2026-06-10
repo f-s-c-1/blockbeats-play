@@ -122,29 +122,35 @@ watch(inboxMessages, (msgs) => { if (activeTab.value === 'inbox') inboxSeen.valu
 // 玩家消息弹幕：新消息从屏幕飘过，主持人可一键关闭（状态记本机）
 const DANMAKU_KEY = 'caoyuan:danmaku'
 const danmakuOn = ref(true)
+interface DanmakuItem { key: string; text: string; top: number; dur: number }
+const danmaku = ref<DanmakuItem[]>([])
+let danmakuSeq = 0
+
+function flyDanmaku(text: string) {
+  const item: DanmakuItem = {
+    key: `dm_${danmakuSeq++}`,
+    text,
+    top: 8 + Math.random() * 52,
+    dur: 9 + Math.random() * 4,
+  }
+  danmaku.value = [...danmaku.value, item]
+  setTimeout(() => { danmaku.value = danmaku.value.filter(d => d.key !== item.key) }, item.dur * 1000 + 500)
+}
+
 function toggleDanmaku() {
   danmakuOn.value = !danmakuOn.value
   localStorage.setItem(DANMAKU_KEY, danmakuOn.value ? '1' : '0')
+  if (danmakuOn.value) flyDanmaku('弹幕已开启，玩家消息会从这里飘过 🎉')
 }
-interface DanmakuItem { key: string; text: string; top: number; dur: number }
-const danmaku = ref<DanmakuItem[]>([])
+
 let danmakuInit = false
 watch(inboxMessages, (msgs, prev) => {
   // 首次收到状态（含历史消息）不飘，只飘之后新来的
   if (!danmakuInit) { danmakuInit = true; return }
   if (!danmakuOn.value) return
   const prevIds = new Set((prev || []).map(m => m.id))
-  const fresh = msgs.filter(m => !prevIds.has(m.id)).slice(0, 5)
-  for (const m of fresh) {
-    const item: DanmakuItem = {
-      key: `${m.id}_${m.ts}`,
-      text: `${m.fromName}：${m.text}`,
-      top: 8 + Math.random() * 52,
-      dur: 9 + Math.random() * 4,
-    }
-    danmaku.value = [...danmaku.value, item]
-    setTimeout(() => { danmaku.value = danmaku.value.filter(d => d.key !== item.key) }, item.dur * 1000 + 500)
-  }
+  msgs.filter(m => !prevIds.has(m.id)).slice(0, 5)
+    .forEach(m => flyDanmaku(`${m.fromName}：${m.text}`))
 })
 
 const navItems = [
@@ -459,7 +465,7 @@ function formatTime(ts: number) {
           </button>
           <button class="sm" @click="copyLink">{{ copyState === 'copied' ? '已复制' : '复制链接' }}</button>
           <button class="ghost sm" @click="openJoinPage">打开玩家页</button>
-          <button class="ghost sm" :class="{ live: danmakuOn }" @click="toggleDanmaku">{{ danmakuOn ? '弹幕开' : '弹幕关' }}</button>
+          <button class="ghost sm" :class="{ live: danmakuOn }" @click="toggleDanmaku">弹幕：{{ danmakuOn ? '开' : '关' }}</button>
           <button v-if="room.phase !== 'ended'" class="sm danger" @click="endRoom">结束活动</button>
           <span v-else class="tag spy">已结束</span>
         </div>

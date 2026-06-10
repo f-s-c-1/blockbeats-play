@@ -6,7 +6,7 @@ import type {
   RoomState, Player, Team, ClientEvent, PlayerView, AdminView, AdminInbox,
 } from '../../shared/types'
 import { AVATAR_POOL, TEAM_NAME_POOL } from '../../shared/types'
-import { UNDERCOVER_PAIRS } from '../../shared/words'
+import { UNDERCOVER_PAIRS, CHARADES_WORDS, CHARADES_CATEGORIES } from '../../shared/words'
 
 const MAX_INBOX_MESSAGES = 200
 const MAX_SEEN_ACTIONS = 5000
@@ -290,6 +290,16 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
         pl.out = pl.out || []
         if (!pl.out.includes(ev.targetId)) pl.out.push(ev.targetId)
       }
+      else if (ev.kind === 'uneliminate' && ev.targetId) {
+        pl.out = (pl.out || []).filter((x: string) => x !== ev.targetId)
+      }
+      else if (ev.kind === 'whoami:guessed' && ev.targetId) {
+        pl.guessed = pl.guessed || []
+        if (!pl.guessed.includes(ev.targetId)) pl.guessed.push(ev.targetId)
+      }
+      else if (ev.kind === 'whoami:unguess' && ev.targetId) {
+        pl.guessed = (pl.guessed || []).filter((x: string) => x !== ev.targetId)
+      }
       break
     }
 
@@ -367,6 +377,30 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
       if (!buzzes.some(b => b.playerId === playerId)) {
         buzzes.push({ playerId, name: p.name, avatar: p.avatar, ts: Date.now() })
       }
+      break
+    }
+
+    case 'whoami:push': {
+      const guard = adminOnly(); if (guard) return guard
+      const participants = uniqueIds(ev.participantIds).filter(id => {
+        const p = findPlayer(s, id)
+        return p && !p.kicked
+      })
+      if (participants.length < 2) return { ok: false, error: { code: 'too_few', message: '猜猜我是谁至少 2 人' } }
+      let pool = CHARADES_WORDS
+      if (ev.category && (CHARADES_CATEGORIES as readonly string[]).includes(ev.category)) {
+        pool = pool.filter(w => w.category === ev.category)
+      }
+      if (pool.length < participants.length) return { ok: false, error: { code: 'too_few_words', message: '该分类词不够分，请换分类' } }
+      const words = shuffle(pool.map(w => w.text)).slice(0, participants.length)
+      const assignment: Record<string, string> = {}
+      participants.forEach((id, i) => { assignment[id] = words[i] })
+      s.currentStage = {
+        type: 'whoami', visibility: 'A',
+        payload: { assignment, participantIds: participants, guessed: [] },
+        startedAt: Date.now(),
+      }
+      s.phase = 'running'
       break
     }
 
@@ -612,6 +646,26 @@ export function buildPlayerView(rt: RoomRuntime, playerId: string): PlayerView {
 // 主环节内容裁剪（不含 E 的 team/secret，那在 buildPlayerView 拼）
 function visibleStageContent(s: RoomState, st: RoomState['currentStage'], me: Player): Record<string, any> {
   if (!st) return {}
+
+  // 猜猜我是谁（A 类反转）：参赛者能看到所有别人的牌，唯独看不到自己的；
+  // 旁观者（未参赛）全知视角，看所有人的牌跟着起哄；猜中后自己的牌才翻给本人。
+  if (st.type === 'whoami') {
+    const parts: string[] = st.payload.participantIds || []
+    const guessed: string[] = st.payload.guessed || []
+    const cards = (excludeId?: string) => parts
+      .filter(id => id !== excludeId)
+      .map(id => {
+        const p = findPlayer(s, id)
+        return { id, name: p?.name || '?', avatar: p?.avatar || '❓', word: st.payload.assignment[id], guessed: guessed.includes(id) }
+      })
+    if (!parts.includes(me.id)) return { spectator: true, others: cards() }
+    return {
+      meGuessed: guessed.includes(me.id),
+      myWord: guessed.includes(me.id) ? st.payload.assignment[me.id] : undefined,
+      others: cards(me.id),
+    }
+  }
+
   switch (st.visibility) {
     case 'C': {
       // 全员同屏，但兜底剔除敏感字段——防止未来某个环节把私密数据误塞进 C 类 payload
@@ -625,8 +679,9 @@ function visibleStageContent(s: RoomState, st: RoomState['currentStage'], me: Pl
     case 'A': {
       const inGame = (st.payload.participantIds || []).includes(me.id)
       if (!inGame) return { notInGame: true }
-      if ((st.payload.blankIds || []).includes(me.id)) return { isBlank: true }
-      return { myWord: st.payload.assignment[me.id] }
+      const out = (st.payload.out || []).includes(me.id)
+      if ((st.payload.blankIds || []).includes(me.id)) return { isBlank: true, out }
+      return { myWord: st.payload.assignment[me.id], out }
     }
     case 'D': {
       // 投票进度只透出"已投几人"，不透出票数分布

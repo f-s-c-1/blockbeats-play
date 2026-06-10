@@ -24,6 +24,8 @@ const notice = ref<{ text: string; tone: 'ok' | 'error' } | null>(null)
 
 onMounted(() => {
   disguised.value = localStorage.getItem(DISGUISE_KEY) === '1'
+  // iOS/Chrome 要求用户先交互才允许出声：首次触摸即解锁 AudioContext
+  document.addEventListener('pointerdown', unlockAudio, { once: true })
   timer = setInterval(() => { now.value = Date.now() }, 250)
   connect(() => {
     const saved = localStorage.getItem(STORE_KEY)
@@ -114,6 +116,14 @@ function triggerStageCue() {
 
 // 环节切换提示音（PRD §9.3：震动 + 提示音唤起注意）
 let audioCtx: AudioContext | null = null
+function unlockAudio() {
+  try {
+    const Ctx = window.AudioContext || (window as any).webkitAudioContext
+    if (!Ctx) return
+    audioCtx ||= new Ctx()
+    audioCtx.resume?.()
+  } catch { /* 忽略 */ }
+}
 function playCue() {
   try {
     const Ctx = window.AudioContext || (window as any).webkitAudioContext
@@ -208,6 +218,20 @@ const timerUrgent = computed(() => {
   return t.endsAt - now.value <= 10_000
 })
 
+// 倒计时归零：震动 + 提示音 + banner 变「时间到」
+const timerRemain = computed(() => {
+  const t = pv.value?.overlays?.timer
+  if (!t) return null
+  return remainSec(t.endsAt, t.paused, t.remaining)
+})
+watch(timerRemain, (s, old) => {
+  if (s === 0 && typeof old === 'number' && old > 0) {
+    const nav = navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean }
+    nav.vibrate?.([200, 80, 200])
+    playCue()
+  }
+})
+
 const teamNameDraft = ref('')
 watch(() => pv.value?.team?.name, (teamName) => {
   teamNameDraft.value = teamName || ''
@@ -259,9 +283,9 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
   <div v-else class="wrap">
     <div v-if="pv?.overlays" class="overlay-bar">
       <div v-if="pv.overlays.announce" class="banner">📢 {{ pv.overlays.announce.text }}</div>
-      <div v-if="pv.overlays.timer" class="banner timer-banner" :class="{ urgent: timerUrgent }">
-        ⏳ {{ remainSec(pv.overlays.timer.endsAt, pv.overlays.timer.paused, pv.overlays.timer.remaining) }}s
-        <span v-if="pv.overlays.timer.paused" class="muted">（已暂停）</span>
+      <div v-if="pv.overlays.timer" class="banner timer-banner" :class="{ urgent: timerUrgent || timerRemain === 0 }">
+        <template v-if="timerRemain === 0">⏰ 时间到！</template>
+        <template v-else>⏳ {{ timerRemain }}s<span v-if="pv.overlays.timer.paused" class="muted">（已暂停）</span></template>
       </div>
     </div>
 
@@ -407,6 +431,7 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
         </template>
         <template v-else>
           <div class="stage-kicker">谁是卧底 · 防偷看模式</div>
+          <p v-if="pv.stage.content.out" class="toast error" style="text-align:center">💀 你已出局，本轮旁观</p>
           <h2>你的词</h2>
           <div
             class="word-card secret-card"
@@ -464,6 +489,39 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
         </template>
       </div>
 
+      <div v-else-if="pv.stage.type === 'whoami'" class="stage-panel stage-enter" :class="{ pulse: stagePulse }">
+        <template v-if="pv.stage.content.spectator">
+          <div class="stage-kicker">猜猜我是谁 · 旁观全知</div>
+          <p class="muted" style="text-align:center">你能看到所有人的牌——憋住别说出来，看他们猜！</p>
+        </template>
+        <template v-else-if="pv.stage.content.meGuessed">
+          <div class="stage-kicker">猜猜我是谁 · 猜中啦</div>
+          <div class="word-card">
+            <div class="big word">🎉 {{ pv.stage.content.myWord }}</div>
+          </div>
+          <p class="muted" style="text-align:center">恭喜！你猜中了自己头上的词。</p>
+        </template>
+        <template v-else>
+          <div class="stage-kicker">猜猜我是谁 · 你的词只有别人能看到</div>
+          <div class="word-card">
+            <div class="big">❓</div>
+          </div>
+          <p class="muted" style="text-align:center">
+            轮到你时向大家提问，问题只能用「是 / 不是」回答（如"我是动物吗？""我能吃吗？"），猜中自己头上的词即获胜。
+          </p>
+        </template>
+        <template v-if="!pv.stage.content.meGuessed">
+          <h2>大家头上的词（憋住，别念出来！）</h2>
+          <div class="list">
+            <span v-for="o in pv.stage.content.others" :key="o.id" class="member" :class="{ out: o.guessed }">
+              <span class="em">{{ o.avatar }}</span>{{ o.name }}
+              <span class="tag info">{{ o.word }}</span>
+              <span v-if="o.guessed" class="tag live">已猜中</span>
+            </span>
+          </div>
+        </template>
+      </div>
+
       <div v-else-if="pv.stage.type === 'buzzer'" class="stage-panel stage-enter waiting-panel" :class="{ pulse: stagePulse }">
         <div style="width:100%">
           <div class="stage-kicker">{{ pv.stage.content.title || '抢答' }}</div>
@@ -505,7 +563,7 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
           <div class="huge">✅</div>
           <h1 style="text-align:center">已投票</h1>
           <p class="muted" style="text-align:center">
-            已投 {{ pv.stage.content.votedCount }}/{{ pv.stage.content.totalVoters }} 人，等待主持人公布结果。
+            已投 {{ pv.stage.content.votedCount }}/{{ pv.stage.content.totalVoters }} 人，等待主持人公布结果（投票不可更改）。
           </p>
         </template>
         <template v-else>

@@ -204,6 +204,47 @@ describe('可见性裁剪（系统灵魂）', () => {
   })
 })
 
+describe('猜猜我是谁', () => {
+  it('参赛者看到所有别人的牌、看不到自己的；旁观者全知；猜中后自己的牌翻开', () => {
+    const rt = createRoom('TEST')
+    const ids = joinPlayers(rt, 5)
+    const r = reduce(rt, { t: 'whoami:push', participantIds: ids.slice(0, 3), actionId: aid() }, ADMIN)
+    expect(r.ok).toBe(true)
+    const me = buildPlayerView(rt, ids[0])
+    expect(me.stage?.content.myWord).toBeUndefined() // 自己的牌看不到
+    expect(me.stage?.content.others).toHaveLength(2) // 能看到其他两个参赛者的牌
+    expect(me.stage?.content.others.every((o: any) => o.word)).toBe(true)
+    expect(me.stage?.content.others.some((o: any) => o.id === ids[0])).toBe(false)
+    // 旁观者全知（3 张牌都能看）
+    const watcher = buildPlayerView(rt, ids[4])
+    expect(watcher.stage?.content.spectator).toBe(true)
+    expect(watcher.stage?.content.others).toHaveLength(3)
+    // 主持人标记猜中 → 本人翻牌
+    reduce(rt, { t: 'stage:action', kind: 'whoami:guessed', targetId: ids[0], actionId: aid() }, ADMIN)
+    const after = buildPlayerView(rt, ids[0])
+    expect(after.stage?.content.meGuessed).toBe(true)
+    expect(after.stage?.content.myWord).toBeTruthy()
+  })
+
+  it('人数与词库校验', () => {
+    const rt = createRoom('TEST')
+    const ids = joinPlayers(rt, 2)
+    expect(reduce(rt, { t: 'whoami:push', participantIds: [ids[0]], actionId: aid() }, ADMIN).error?.code).toBe('too_few')
+  })
+})
+
+describe('卧底出局管理', () => {
+  it('出局/复活标记同步到本人视图', () => {
+    const rt = createRoom('TEST')
+    const ids = joinPlayers(rt, 3)
+    reduce(rt, { t: 'undercover:push', wordPairId: 'wp1', participantIds: ids, spyWordCount: 1, actionId: aid() }, ADMIN)
+    reduce(rt, { t: 'stage:action', kind: 'eliminate', targetId: ids[0], actionId: aid() }, ADMIN)
+    expect(buildPlayerView(rt, ids[0]).stage?.content.out).toBe(true)
+    reduce(rt, { t: 'stage:action', kind: 'uneliminate', targetId: ids[0], actionId: aid() }, ADMIN)
+    expect(buildPlayerView(rt, ids[0]).stage?.content.out).toBe(false)
+  })
+})
+
 describe('内鬼任务通道', () => {
   it('管理员可单独给内鬼改派任务；非内鬼/非管理员被拒；任务只下发给本人', () => {
     const rt = createRoom('TEST')

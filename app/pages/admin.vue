@@ -83,6 +83,8 @@ const stageLabels: Record<string, string> = {
   rulecard: '规则卡',
   counter: '计数挑战',
   standstill: '定格挑战',
+  buzzer: '抢答',
+  whoami: '猜猜我是谁',
 }
 
 const visibilityLabels: Record<string, string> = {
@@ -99,12 +101,14 @@ const activeSection = computed(() => {
     case 'draw': return 'draw'
     case 'undercover': return 'undercover'
     case 'charades': return 'charades'
+    case 'whoami': return 'whoami'
     case 'lastman': return 'lastman'
     case 'vote':
     case 'reveal': return 'vote'
     case 'rulecard':
     case 'counter':
-    case 'standstill': return 'general'
+    case 'standstill':
+    case 'buzzer': return 'general'
     default: return ''
   }
 })
@@ -158,6 +162,7 @@ const navItems = [
   { id: 'draw', label: '抽签' },
   { id: 'undercover', label: '卧底' },
   { id: 'charades', label: '你比我猜' },
+  { id: 'whoami', label: '猜猜我是谁' },
   { id: 'lastman', label: '拽尾巴' },
   { id: 'vote', label: '投票' },
   { id: 'score', label: '积分' },
@@ -239,14 +244,26 @@ function openJoinPage() {
   if (joinLink.value) window.open(joinLink.value, '_blank', 'noopener,noreferrer')
 }
 
+// —— 主题输入弹层（替代原生 prompt，移动端体验差且容易被拦截）——
+const dialog = ref<null | { title: string; value: string; placeholder?: string; maxlength?: number; onOk: (v: string) => void }>(null)
+function openDialog(title: string, value: string, onOk: (v: string) => void, placeholder = '', maxlength = 32) {
+  dialog.value = { title, value, onOk, placeholder, maxlength }
+}
+function dialogOk() {
+  const d = dialog.value
+  if (!d) return
+  const v = d.value.trim()
+  dialog.value = null
+  if (v) d.onOk(v)
+}
+
 // —— 分组 ——
 const teamCount = ref(4)
 function generate() { send({ t: 'draw:generate', teamCount: teamCount.value, balance: false }) }
 function revealDraw() { send({ t: 'stage:set', stage: { type: 'draw', visibility: 'E', payload: {} } }) }
 function setTeamName(teamId: string) {
   const current = teams.value.find(t => t.id === teamId)?.name || ''
-  const name = prompt('输入队名', current)
-  if (name?.trim()) send({ t: 'team:setName', teamId, name: name.trim() })
+  openDialog('输入队名', current, name => send({ t: 'team:setName', teamId, name }), '队名（12 字内）', 12)
 }
 
 // —— 内鬼指定 ——
@@ -264,8 +281,7 @@ function assignSpies() {
 
 // 单独给某个内鬼改派秘密任务（只有他自己按住身份面板能看到）
 function assignSpyTask(id: string, current?: string) {
-  const task = prompt('给该内鬼的秘密任务（只有他本人可见）', current || SPY_TASKS[0])
-  if (task?.trim()) send({ t: 'spy:task', playerId: id, task: task.trim() })
+  openDialog('给该内鬼的秘密任务（仅本人可见）', current || SPY_TASKS[0], task => send({ t: 'spy:task', playerId: id, task }), '任务内容（100 字内）', 100)
 }
 
 // —— 谁是卧底 ——
@@ -324,6 +340,33 @@ function pushCharades() {
   send({ t: 'charades:push', actorId: chActor.value, word: chWord.value, durationSec: 60 })
 }
 
+// —— 猜猜我是谁 ——
+const wmCategory = ref<string>('全部')
+const wmParts = ref<Set<string>>(new Set())
+function toggleWm(id: string) {
+  wmParts.value.has(id) ? wmParts.value.delete(id) : wmParts.value.add(id)
+  wmParts.value = new Set(wmParts.value)
+}
+function clearWm() { wmParts.value = new Set() }
+function pushWhoami() {
+  send({
+    t: 'whoami:push',
+    participantIds: [...wmParts.value],
+    category: wmCategory.value === '全部' ? undefined : wmCategory.value,
+  })
+}
+const wmGuessed = computed<string[]>(() => stage.value?.type === 'whoami' ? (stage.value.payload.guessed || []) : [])
+function toggleWmGuessed(id: string) {
+  send({ t: 'stage:action', kind: wmGuessed.value.includes(id) ? 'whoami:unguess' : 'whoami:guessed', targetId: id })
+}
+const wmAssignment = computed(() => stage.value?.type === 'whoami' ? stage.value.payload.assignment as Record<string, string> : null)
+
+// —— 卧底出局管理 ——
+const ucOut = computed<string[]>(() => stage.value?.type === 'undercover' ? (stage.value.payload.out || []) : [])
+function toggleUcOut(id: string) {
+  send({ t: 'stage:action', kind: ucOut.value.includes(id) ? 'uneliminate' : 'eliminate', targetId: id })
+}
+
 // —— 拽尾巴 ——
 function startLastman() { send({ t: 'lastman:start' }) }
 function eliminate(id: string) { send({ t: 'lastman:eliminate', targetId: id }) }
@@ -333,7 +376,17 @@ function finishLastman() { send({ t: 'lastman:finish' }) }
 // —— 投票 ——
 function openVote() { send({ t: 'vote:open' }) }
 function revealCount() { send({ t: 'vote:revealCount' }) }
-function revealSpy() { send({ t: 'vote:revealSpy' }) }
+function revealSpy() {
+  // 不可撤销的高危操作：全场立即翻牌
+  if (confirm('确认揭晓内鬼？全场立即翻牌看到内鬼名单，此操作不可撤销！')) send({ t: 'vote:revealSpy' })
+}
+
+// 成员所属队伍（快捷记分用）
+const memberTeamId = (id: string) => members.value.find(m => m.id === id)?.teamId || null
+function awardMemberTeam(playerId: string, points = 1) {
+  const teamId = memberTeamId(playerId)
+  if (teamId) adjust(teamId, points, 1)
+}
 
 // —— 积分 ——
 function adjust(teamId: string, delta: number, mult: 1 | 2) { send({ t: 'score:adjust', teamId, delta, multiplier: mult }) }
@@ -394,8 +447,7 @@ function toggleUplink(open: boolean) { send({ t: 'admin:toggleUplink', open }) }
 // —— 治理 ——
 function kick(id: string) { if (confirm('踢出该成员？')) send({ t: 'admin:kick', playerId: id }) }
 function renamePlayer(id: string, currentName: string) {
-  const newName = prompt('输入新名字', currentName)
-  if (newName?.trim()) send({ t: 'admin:rename', playerId: id, newName: newName.trim() })
+  openDialog('输入新名字', currentName, newName => send({ t: 'admin:rename', playerId: id, newName }), '名字（12 字内）', 12)
 }
 
 function clearStage() { send({ t: 'stage:clear' }) }
@@ -444,6 +496,17 @@ function formatTime(ts: number) {
   </div>
 
   <div v-else-if="room" class="wrap admin-wrap">
+    <div v-if="dialog" class="modal-mask" @click.self="dialog = null">
+      <div class="card modal-card">
+        <h2>{{ dialog.title }}</h2>
+        <input v-model="dialog.value" :placeholder="dialog.placeholder" :maxlength="dialog.maxlength" @keyup.enter="dialogOk" />
+        <div class="section-actions">
+          <button class="sm ghost" @click="dialog = null">取消</button>
+          <button class="sm" :disabled="!dialog.value.trim()" @click="dialogOk">确定</button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="danmakuOn && danmaku.length" class="danmaku-layer" aria-hidden="true">
       <div
         v-for="d in danmaku"
@@ -634,10 +697,17 @@ function formatTime(ts: number) {
             >{{ m.avatar }}{{ m.name }}</span>
           </div>
           <div v-if="ucAssignment" class="grid">
+            <p class="muted">被票出/猜出的人点「出局」，他的手机会显示已出局：</p>
             <div v-for="(w, id) in ucAssignment" :key="id" class="score-row">
-              <span>{{ memberName(id) }}</span>
-              <span v-if="!w" class="tag info">⬜ 白板</span>
-              <span v-else class="tag" :class="{ spy: w === stage?.payload.spy }">{{ w }}</span>
+              <span :class="{ 'is-out': ucOut.includes(id) }">
+                {{ memberName(id) }}
+                <span v-if="!w" class="tag info">⬜ 白板</span>
+                <span v-else class="tag" :class="{ spy: w === stage?.payload.spy }">{{ w }}</span>
+                <span v-if="ucOut.includes(id)" class="tag warn">出局</span>
+              </span>
+              <button class="sm" :class="{ ghost: !ucOut.includes(id) }" @click="toggleUcOut(id)">
+                {{ ucOut.includes(id) ? '复活' : '出局' }}
+              </button>
             </div>
           </div>
         </div>
@@ -666,6 +736,44 @@ function formatTime(ts: number) {
           </div>
           <button class="sm" :disabled="!chActor" @click="pushCharades">发词给比划者</button>
           <p v-if="stage?.type === 'charades'" class="toast">当前词：{{ stage.payload.word }} · {{ memberName(stage.payload.actorId) }} 比划</p>
+        </div>
+      </section>
+
+      <section v-show="activeTab === 'whoami'" id="whoami" class="card">
+        <div class="section-head">
+          <div>
+            <h2>猜猜我是谁</h2>
+            <p class="muted">每人头上一个词：自己看不到，别人全能看到。轮流提"是/不是"问题猜自己；没被选中的人是旁观全知视角。</p>
+          </div>
+          <span class="tag">{{ wmParts.size }} 人参赛</span>
+        </div>
+        <div class="grid">
+          <div class="section-actions">
+            <select v-model="wmCategory">
+              <option value="全部">全部分类</option>
+              <option v-for="c in CHARADES_CATEGORIES" :key="c" :value="c">{{ c }}</option>
+            </select>
+            <button class="sm ghost" @click="clearWm">清空</button>
+            <button class="sm" :disabled="wmParts.size < 2" @click="pushWhoami">发牌开始</button>
+          </div>
+          <div class="list">
+            <span
+              v-for="m in members"
+              :key="m.id"
+              class="member clickable"
+              :class="{ alive: wmParts.has(m.id) }"
+              @click="toggleWm(m.id)"
+            >{{ m.avatar }}{{ m.name }}</span>
+          </div>
+          <div v-if="wmAssignment" class="grid">
+            <p class="muted">点「猜中」该玩家手机立刻翻牌庆祝：</p>
+            <div v-for="(w, id) in wmAssignment" :key="id" class="score-row">
+              <span>{{ memberAvatar(id) }}{{ memberName(id) }} <span class="tag info">{{ w }}</span></span>
+              <button class="sm" :class="{ ghost: !wmGuessed.includes(id) }" @click="toggleWmGuessed(id)">
+                {{ wmGuessed.includes(id) ? '✅ 已猜中（撤销）' : '猜中' }}
+              </button>
+            </div>
+          </div>
         </div>
       </section>
     </div>
@@ -717,8 +825,8 @@ function formatTime(ts: number) {
         </div>
         <div v-if="voteTally && Object.keys(voteTally).length" class="grid">
           <div v-for="(n, id) in voteTally" :key="id" class="score-row">
-            <span>{{ memberName(id as string) }}</span>
-            <strong>{{ n }}</strong>
+            <span>{{ memberName(id as string) }} <strong>{{ n }} 票</strong></span>
+            <button v-if="memberTeamId(id as string)" class="sm ghost" @click="awardMemberTeam(id as string, 1)">TA队 +1</button>
           </div>
         </div>
         <div v-else class="empty-state">暂无投票数据。</div>
@@ -776,8 +884,8 @@ function formatTime(ts: number) {
           <div v-if="stage?.type === 'buzzer'" class="grid">
             <p class="muted">抢答顺序（{{ buzzes.length }} 人）：</p>
             <div v-for="(b, i) in buzzes" :key="b.playerId" class="score-row">
-              <span>{{ i + 1 }}. {{ b.avatar }} {{ b.name }}</span>
-              <span v-if="i === 0" class="tag info">最快</span>
+              <span>{{ i + 1 }}. {{ b.avatar }} {{ b.name }}<span v-if="i === 0" class="tag info">最快</span></span>
+              <button v-if="memberTeamId(b.playerId)" class="sm ghost" @click="awardMemberTeam(b.playerId, 1)">TA队 +1</button>
             </div>
             <p v-if="!buzzes.length" class="muted">等待玩家拍下抢答键…</p>
           </div>

@@ -668,3 +668,18 @@ button.nav-pill:active { transform: none; }
 @media (prefers-reduced-motion: reduce) {
   .danmaku-layer { display: none; }
 }
+
+/* ── 主题输入弹层（替代原生 prompt）── */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(8, 6, 3, .66);
+}
+.modal-card { width: min(92vw, 400px); margin-bottom: 0; }
+
+/* 出局成员的行内置灰 */
+.is-out { opacity: .5; text-decoration: line-through; }

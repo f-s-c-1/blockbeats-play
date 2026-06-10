@@ -99,6 +99,7 @@ export type ClientEvent =
   | { t: 'admin:kick'; playerId: string; actionId: string }
   | { t: 'admin:rename'; playerId: string; newName: string; actionId: string }
   | { t: 'msg:send'; text: string; stageContext?: string; actionId: string }
+  | { t: 'ping'; actionId?: string } // 心跳保活，连接层处理
 
 // ───────── 服务端 → 客户端事件 ─────────
 export interface AdminInbox {
@@ -139,6 +140,7 @@ export type ServerEvent =
   | { t: 'joined'; clientId: string; playerId: string }
   | { t: 'created'; code: string; adminToken: string }
   | { t: 'kicked' }
+  | { t: 'pong' }
   | { t: 'error'; code: string; message: string }
 
 // 草原主题 emoji 池（PRD §7.2）

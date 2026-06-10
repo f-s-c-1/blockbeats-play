@@ -21,6 +21,22 @@ export function useRoom() {
   let resendOnOpen: (() => void) | null = null
   let disposed = false
 
+  // 心跳保活：弱网/路由器掐空闲连接时浏览器可能收不到 close 事件（假死），
+  // 界面看着"在线"却收不到任何广播。每 10s 发 ping，30s 没收到任何消息就强制重连。
+  let lastMsgAt = Date.now()
+  let heartbeat: any = null
+  function startHeartbeat() {
+    if (heartbeat) return
+    heartbeat = setInterval(() => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return
+      if (Date.now() - lastMsgAt > 30_000) {
+        try { ws.close() } catch {} // 触发 onclose → 自动重连并恢复身份
+        return
+      }
+      try { ws.send(JSON.stringify({ t: 'ping' })) } catch {}
+    }, 10_000)
+  }
+
   function wsUrl() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     return `${proto}://${location.host}/ws`
@@ -32,14 +48,18 @@ export function useRoom() {
     ws = new WebSocket(wsUrl())
     ws.onopen = () => {
       connected.value = true
+      lastMsgAt = Date.now()
+      startHeartbeat()
       // 先恢复身份，再冲洗断线期间排队的业务事件。
       const q = queue; queue = []
       resendOnOpen?.()
       q.forEach(e => raw(e))
     }
     ws.onmessage = (e) => {
+      lastMsgAt = Date.now()
       let msg: ServerEvent
       try { msg = JSON.parse(e.data) } catch { return }
+      if (msg.t === 'pong') return
       handle(msg)
     }
     ws.onclose = () => {
@@ -77,6 +97,7 @@ export function useRoom() {
   onScopeDispose(() => {
     disposed = true
     if (reconnectTimer) clearTimeout(reconnectTimer)
+    if (heartbeat) clearInterval(heartbeat)
     try { ws?.close() } catch {}
   })
 

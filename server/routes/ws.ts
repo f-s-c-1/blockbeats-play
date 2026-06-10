@@ -97,6 +97,9 @@ export default defineWebSocketHandler({
     let ev: ClientEvent
     try { ev = JSON.parse(message.text()) } catch { return send(peer, { t: 'error', code: 'bad_json', message: '消息格式错误' }) }
 
+    // 心跳：保活 + 让客户端能检测假死连接
+    if (ev.t === 'ping') return send(peer, { t: 'pong' })
+
     // —— 连接级动作：建立身份 ——
     if (ev.t === 'room:create') {
       const code = ev.code ? normalizeCode(ev.code) : genCode()

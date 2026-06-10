@@ -204,6 +204,25 @@ describe('可见性裁剪（系统灵魂）', () => {
   })
 })
 
+describe('内鬼任务通道', () => {
+  it('管理员可单独给内鬼改派任务；非内鬼/非管理员被拒；任务只下发给本人', () => {
+    const rt = createRoom('TEST')
+    const ids = joinPlayers(rt, 4)
+    reduce(rt, { t: 'draw:generate', teamCount: 2, balance: false, actionId: aid() }, ADMIN)
+    reduce(rt, { t: 'spy:assign', playerIds: [ids[0]], actionId: aid() }, ADMIN)
+    // 非内鬼目标被拒
+    expect(reduce(rt, { t: 'spy:task', playerId: ids[1], task: 'x', actionId: aid() }, ADMIN).error?.code).toBe('not_spy')
+    // 参与者无权派任务
+    expect(reduce(rt, { t: 'spy:task', playerId: ids[0], task: 'x', actionId: aid() }, { role: 'player', playerId: ids[1] }).error?.code).toBe('forbidden')
+    // 管理员改派成功
+    expect(reduce(rt, { t: 'spy:task', playerId: ids[0], task: '偷拍队长三张', actionId: aid() }, ADMIN).ok).toBe(true)
+    reduce(rt, { t: 'stage:set', stage: { type: 'draw', visibility: 'E', payload: {} }, actionId: aid() }, ADMIN)
+    expect(buildPlayerView(rt, ids[0]).secret?.task).toBe('偷拍队长三张')
+    // 其他人拿不到任何任务信息
+    expect(buildPlayerView(rt, ids[1]).secret).toBeUndefined()
+  })
+})
+
 describe('拽尾巴淘汰赛', () => {
   it('淘汰至 1 人自动产生冠军，复活则清空冠军', () => {
     const rt = createRoom('TEST')

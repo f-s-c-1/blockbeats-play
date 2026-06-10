@@ -221,6 +221,17 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
       break
     }
 
+    case 'spy:task': {
+      const guard = adminOnly(); if (guard) return guard
+      const p = findPlayer(s, ev.playerId)
+      if (!p || p.kicked) return { ok: false, error: { code: 'notfound', message: '成员不存在' } }
+      if (p.secretRole !== 'spy') return { ok: false, error: { code: 'not_spy', message: '该成员不是内鬼，请先指定' } }
+      const task = (ev.task || '').trim().slice(0, 100)
+      if (!task) return { ok: false, error: { code: 'empty', message: '任务内容为空' } }
+      p.spyTask = task
+      break
+    }
+
     case 'team:setName': {
       // 队长或管理员
       const t = findTeam(s, ev.teamId)

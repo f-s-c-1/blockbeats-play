@@ -74,6 +74,7 @@ export type ClientEvent =
   | { t: 'player:rejoin'; code: string; clientId: string; actionId: string }
   | { t: 'draw:generate'; teamCount: number; balance: boolean; actionId: string }
   | { t: 'spy:assign'; playerIds: string[]; tasks?: Record<string, string>; actionId: string }
+  | { t: 'spy:task'; playerId: string; task: string; actionId: string } // 管理员单独给某内鬼改派秘密任务
   | { t: 'team:setName'; teamId: string; name: string; actionId: string }
   | { t: 'stage:set'; stage: { type: StageType; visibility: Visibility; payload: Record<string, any> }; actionId: string }
   | { t: 'stage:clear'; actionId: string }

@@ -262,6 +262,12 @@ function assignSpies() {
   send({ t: 'spy:assign', playerIds: ids, tasks })
 }
 
+// 单独给某个内鬼改派秘密任务（只有他自己按住身份面板能看到）
+function assignSpyTask(id: string, current?: string) {
+  const task = prompt('给该内鬼的秘密任务（只有他本人可见）', current || SPY_TASKS[0])
+  if (task?.trim()) send({ t: 'spy:task', playerId: id, task: task.trim() })
+}
+
 // —— 谁是卧底 ——
 const ucCategory = ref<string>('全部')
 const ucFilteredPairs = computed(() =>
@@ -533,6 +539,7 @@ function formatTime(ts: number) {
             <span class="member-name">{{ m.name }}</span>
             <span v-if="m.secretRole === 'spy'" class="tag spy">鬼</span>
             <span class="member-actions">
+              <button v-if="m.secretRole === 'spy'" class="sm warning" title="给该内鬼改派秘密任务" @click.stop="assignSpyTask(m.id, m.spyTask)">派任务</button>
               <button class="sm ghost" @click.stop="renamePlayer(m.id, m.name)">改</button>
               <button class="sm danger" @click.stop="kick(m.id)">×</button>
             </span>

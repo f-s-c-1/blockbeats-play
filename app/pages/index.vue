@@ -31,11 +31,7 @@ function joinAsPlayer() {
         </div>
       </div>
 
-      <div class="card">
-        <h2>🎬 我是主持人</h2>
-        <p class="muted">创建房间、控制全场节奏</p>
-        <NuxtLink to="/admin"><button class="ghost full-width">进入控制台</button></NuxtLink>
-      </div>
+      <!-- 主持人入口不在明面展示，直接访问 /admin 进入 -->
     </div>
   </div>
 </template>

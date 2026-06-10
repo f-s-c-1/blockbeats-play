@@ -181,6 +181,14 @@ function onIdentityTap() {
 // 面板是否显示内鬼真实内容：是内鬼且未开伪装
 const showSpyContent = computed(() => !!pv.value?.secret?.isSpy && !disguised.value)
 
+// 主持人改派秘密任务时只震动提醒，不弹任何可见提示（防邻座察觉"他有秘密推送"）
+watch(() => pv.value?.secret?.task, (task, old) => {
+  if (task && old !== undefined && task !== old) {
+    const nav = navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean }
+    nav.vibrate?.([50, 40, 50, 40, 50])
+  }
+})
+
 function doBuzz() {
   send({ t: 'buzz' })
   const nav = navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean }

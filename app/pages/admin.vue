@@ -18,6 +18,7 @@ const TOKEN_KEY = 'caoyuan:admin'
 
 onMounted(() => {
   origin.value = location.origin
+  danmakuOn.value = localStorage.getItem(DANMAKU_KEY) !== '0'
   clock = setInterval(() => { now.value = Date.now() }, 500)
   connect(() => {
     const saved = localStorage.getItem(TOKEN_KEY)
@@ -117,6 +118,34 @@ const inboxSeen = ref(0)
 const inboxUnread = computed(() => Math.max(0, inboxMessages.value.length - inboxSeen.value))
 watch(activeTab, (t) => { if (t === 'inbox') inboxSeen.value = inboxMessages.value.length })
 watch(inboxMessages, (msgs) => { if (activeTab.value === 'inbox') inboxSeen.value = msgs.length })
+
+// 玩家消息弹幕：新消息从屏幕飘过，主持人可一键关闭（状态记本机）
+const DANMAKU_KEY = 'caoyuan:danmaku'
+const danmakuOn = ref(true)
+function toggleDanmaku() {
+  danmakuOn.value = !danmakuOn.value
+  localStorage.setItem(DANMAKU_KEY, danmakuOn.value ? '1' : '0')
+}
+interface DanmakuItem { key: string; text: string; top: number; dur: number }
+const danmaku = ref<DanmakuItem[]>([])
+let danmakuInit = false
+watch(inboxMessages, (msgs, prev) => {
+  // 首次收到状态（含历史消息）不飘，只飘之后新来的
+  if (!danmakuInit) { danmakuInit = true; return }
+  if (!danmakuOn.value) return
+  const prevIds = new Set((prev || []).map(m => m.id))
+  const fresh = msgs.filter(m => !prevIds.has(m.id)).slice(0, 5)
+  for (const m of fresh) {
+    const item: DanmakuItem = {
+      key: `${m.id}_${m.ts}`,
+      text: `${m.fromName}：${m.text}`,
+      top: 8 + Math.random() * 52,
+      dur: 9 + Math.random() * 4,
+    }
+    danmaku.value = [...danmaku.value, item]
+    setTimeout(() => { danmaku.value = danmaku.value.filter(d => d.key !== item.key) }, item.dur * 1000 + 500)
+  }
+})
 
 const navItems = [
   { id: 'members', label: '成员' },
@@ -403,6 +432,14 @@ function formatTime(ts: number) {
   </div>
 
   <div v-else-if="room" class="wrap admin-wrap">
+    <div v-if="danmakuOn && danmaku.length" class="danmaku-layer" aria-hidden="true">
+      <div
+        v-for="d in danmaku"
+        :key="d.key"
+        class="danmaku-item"
+        :style="{ top: d.top + '%', animationDuration: d.dur + 's' }"
+      >💬 {{ d.text }}</div>
+    </div>
     <header class="admin-top">
       <div class="admin-top-main">
         <div>
@@ -422,6 +459,7 @@ function formatTime(ts: number) {
           </button>
           <button class="sm" @click="copyLink">{{ copyState === 'copied' ? '已复制' : '复制链接' }}</button>
           <button class="ghost sm" @click="openJoinPage">打开玩家页</button>
+          <button class="ghost sm" :class="{ live: danmakuOn }" @click="toggleDanmaku">{{ danmakuOn ? '弹幕开' : '弹幕关' }}</button>
           <button v-if="room.phase !== 'ended'" class="sm danger" @click="endRoom">结束活动</button>
           <span v-else class="tag spy">已结束</span>
         </div>

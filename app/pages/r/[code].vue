@@ -152,6 +152,11 @@ function castVote(targetId: string) {
   showNotice('已提交投票')
 }
 
+// 防偷看：敏感内容（词卡/秘密身份）按住才显示，松手即隐藏；
+// 所有人的卡背完全一致，邻座无法通过界面差异认出卧底/白板/内鬼
+const peekWord = ref(false)
+const peekSecret = ref(false)
+
 function doBuzz() {
   send({ t: 'buzz' })
   const nav = navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean }
@@ -286,10 +291,30 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
             </span>
           </div>
         </div>
-        <div v-if="pv.secret?.isSpy" class="panel" style="border-color:rgba(239,68,68,.55);margin-top:12px">
-          <h2>🤫 你是草原内鬼</h2>
-          <p>{{ pv.secret.task || '潜伏到最后别被认出来' }}</p>
-          <p class="muted">保密！只有你和主持人知道。</p>
+        <div
+          v-if="pv.team"
+          class="panel secret-card"
+          style="margin-top:12px"
+          @pointerdown="peekSecret = true"
+          @pointerup="peekSecret = false"
+          @pointerleave="peekSecret = false"
+          @pointercancel="peekSecret = false"
+          @contextmenu.prevent
+        >
+          <template v-if="peekSecret">
+            <template v-if="pv.secret?.isSpy">
+              <h2>🤫 你是草原内鬼</h2>
+              <p>{{ pv.secret.task || '潜伏到最后别被认出来' }}</p>
+            </template>
+            <template v-else>
+              <h2>🐑 你是普通牧民</h2>
+              <p>没有特殊任务，留意身边谁是内鬼。</p>
+            </template>
+          </template>
+          <template v-else>
+            <h2>🔒 我的秘密身份</h2>
+            <p class="muted">按住查看，松手隐藏 —— 每个人都有这块，看不出差别。</p>
+          </template>
         </div>
       </div>
     </div>
@@ -314,10 +339,28 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
             <button class="sm" @click="submitTeamName">保存</button>
           </div>
         </div>
-        <div v-if="pv.secret?.isSpy" class="panel" style="border-color:rgba(239,68,68,.55)">
-          <h2>🤫 你是草原内鬼</h2>
-          <p>{{ pv.secret.task || '潜伏到最后别被认出来' }}</p>
-          <p class="muted">保密！只有你和主持人知道。</p>
+        <div
+          class="panel secret-card"
+          @pointerdown="peekSecret = true"
+          @pointerup="peekSecret = false"
+          @pointerleave="peekSecret = false"
+          @pointercancel="peekSecret = false"
+          @contextmenu.prevent
+        >
+          <template v-if="peekSecret">
+            <template v-if="pv.secret?.isSpy">
+              <h2>🤫 你是草原内鬼</h2>
+              <p>{{ pv.secret.task || '潜伏到最后别被认出来' }}</p>
+            </template>
+            <template v-else>
+              <h2>🐑 你是普通牧民</h2>
+              <p>没有特殊任务，留意身边谁是内鬼。</p>
+            </template>
+          </template>
+          <template v-else>
+            <h2>🔒 我的秘密身份</h2>
+            <p class="muted">按住查看，松手隐藏 —— 每个人都有这块，看不出差别。</p>
+          </template>
         </div>
       </div>
 
@@ -328,21 +371,27 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
           <h1>本轮你不参与</h1>
           <p class="muted">观察大家描述，等待下一轮任务。</p>
         </template>
-        <template v-else-if="pv.stage.content.isBlank">
-          <div class="stage-kicker">谁是卧底 · 只给你看的身份</div>
-          <h2>你的词</h2>
-          <div class="word-card">
-            <div class="big word">⬜ 白板</div>
-          </div>
-          <p class="muted">你没有词！听别人怎么描述，装作你也有词，别被发现。</p>
-        </template>
         <template v-else>
-          <div class="stage-kicker">谁是卧底 · 只给你看的词</div>
+          <div class="stage-kicker">谁是卧底 · 防偷看模式</div>
           <h2>你的词</h2>
-          <div class="word-card">
-            <div class="big word">{{ pv.stage.content.myWord }}</div>
+          <div
+            class="word-card secret-card"
+            @pointerdown="peekWord = true"
+            @pointerup="peekWord = false"
+            @pointerleave="peekWord = false"
+            @pointercancel="peekWord = false"
+            @contextmenu.prevent
+          >
+            <template v-if="peekWord">
+              <div v-if="pv.stage.content.isBlank" class="big word">⬜ 白板</div>
+              <div v-else class="big word">{{ pv.stage.content.myWord }}</div>
+            </template>
+            <div v-else class="card-back">
+              <div class="huge">🎴</div>
+              <p class="muted">按住偷看你的词 · 松手隐藏</p>
+            </div>
           </div>
-          <p class="muted">轮流描述，别暴露，找出谁不一样。</p>
+          <p class="muted">所有人的卡背一模一样，放心按。描述时别念出词本身；白板要装作自己有词。</p>
         </template>
       </div>
 

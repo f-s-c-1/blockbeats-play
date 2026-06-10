@@ -1,6 +1,7 @@
 // Nitro 原生 WebSocket handler（PRD §7 连接层）
 // 职责：连接 ↔ 身份映射；收 ClientEvent → reduce → 给全房广播「按连接裁剪的视图」
 
+import { timingSafeEqual } from 'node:crypto'
 import type { Peer } from 'crossws'
 import type { ClientEvent, ServerEvent } from '../../shared/types'
 import { reduce, buildPlayerView, buildAdminView } from '../game/room'
@@ -15,8 +16,31 @@ interface Session {
 
 // peer.id -> Session
 const sessions = new Map<string, Session>()
-// peer.id -> admin:rejoin 失败次数（防凭证爆破）
-const badTokenTries = new Map<string, number>()
+
+// 管理凭证/口令爆破防护：按房间码计失败次数（断线重连不会重置），
+// 连错 LOCK_AFTER 次锁定 LOCK_MS，期间该房间一律拒绝管理登录
+const loginFails = new Map<string, { count: number; lockedUntil: number }>()
+const LOCK_AFTER = 5
+const LOCK_MS = 15 * 60 * 1000
+
+function isLocked(code: string): boolean {
+  const f = loginFails.get(code)
+  return !!f && f.lockedUntil > Date.now()
+}
+function recordLoginFail(code: string) {
+  const f = loginFails.get(code) || { count: 0, lockedUntil: 0 }
+  f.count++
+  if (f.count >= LOCK_AFTER) { f.lockedUntil = Date.now() + LOCK_MS; f.count = 0 }
+  loginFails.set(code, f)
+}
+function clearLoginFails(code: string) { loginFails.delete(code) }
+
+// 常数时间比较，避免逐字符比较的时序侧信道
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a), bb = Buffer.from(b)
+  if (ab.length !== bb.length) return false
+  return timingSafeEqual(ab, bb)
+}
 // code -> Set<peer>（用于广播）
 const roomPeers = new Map<string, Set<Peer>>()
 
@@ -77,6 +101,9 @@ export default defineWebSocketHandler({
     if (ev.t === 'room:create') {
       const code = ev.code ? normalizeCode(ev.code) : genCode()
       if (!code) return send(peer, { t: 'error', code: 'bad_code', message: '房间码需为 3-8 位英文或数字' })
+      if (ev.adminPass && ev.adminPass.trim().length < 6) {
+        return send(peer, { t: 'error', code: 'weak_pass', message: '主持口令至少 6 位' })
+      }
       // 已结束的房间允许同码重建（释放房间码）；进行中的房间拒绝
       const existing = getRoom(code)
       if (existing && existing.state.phase !== 'ended') {
@@ -96,15 +123,13 @@ export default defineWebSocketHandler({
       if (!code) return send(peer, { t: 'error', code: 'bad_code', message: '房间码格式错误' })
       const rt = getRoom(code)
       if (!rt) return send(peer, { t: 'error', code: 'notfound', message: '房间不存在' })
+      if (isLocked(code)) return send(peer, { t: 'error', code: 'locked', message: '尝试次数过多，请 15 分钟后再试' })
       const pass = (ev.adminPass || '').trim()
-      if (!rt.adminPass || !pass || pass !== rt.adminPass) {
-        const tries = (badTokenTries.get(peer.id) || 0) + 1
-        badTokenTries.set(peer.id, tries)
-        send(peer, { t: 'error', code: 'bad_pass', message: rt.adminPass ? '主持口令错误' : '该房间未设置主持口令，请用原浏览器恢复' })
-        if (tries >= 5) { try { peer.close(4001, 'too_many_tries') } catch { /* 已断开 */ } }
-        return
+      if (!rt.adminPass || !pass || !safeEqual(pass, rt.adminPass)) {
+        recordLoginFail(code)
+        return send(peer, { t: 'error', code: 'bad_pass', message: rt.adminPass ? '主持口令错误' : '该房间未设置主持口令，请用原浏览器恢复' })
       }
-      badTokenTries.delete(peer.id)
+      clearLoginFails(code)
       sessions.set(peer.id, { code, role: 'admin' })
       attachPeer(code, peer)
       // 回发 created：客户端会把 adminToken 存入本地，之后该设备也能断线自动恢复
@@ -118,14 +143,12 @@ export default defineWebSocketHandler({
       if (!code) return send(peer, { t: 'error', code: 'bad_code', message: '房间码格式错误' })
       const rt = getRoom(code)
       if (!rt) return send(peer, { t: 'error', code: 'notfound', message: '房间不存在' })
-      if (rt.adminToken !== ev.adminToken) {
-        const tries = (badTokenTries.get(peer.id) || 0) + 1
-        badTokenTries.set(peer.id, tries)
-        send(peer, { t: 'error', code: 'bad_token', message: '管理员凭证无效' })
-        if (tries >= 5) { try { peer.close(4001, 'too_many_tries') } catch { /* 已断开 */ } }
-        return
+      if (isLocked(code)) return send(peer, { t: 'error', code: 'locked', message: '尝试次数过多，请 15 分钟后再试' })
+      if (!safeEqual(rt.adminToken, ev.adminToken || '')) {
+        recordLoginFail(code)
+        return send(peer, { t: 'error', code: 'bad_token', message: '管理员凭证无效' })
       }
-      badTokenTries.delete(peer.id)
+      clearLoginFails(code)
       sessions.set(peer.id, { code, role: 'admin' })
       attachPeer(code, peer)
       send(peer, { t: 'room:state', ...buildAdminView(rt, true) })
@@ -181,7 +204,6 @@ export default defineWebSocketHandler({
   },
 
   close(peer) {
-    badTokenTries.delete(peer.id)
     const sess = sessions.get(peer.id)
     if (sess) {
       detachPeer(sess.code, peer)

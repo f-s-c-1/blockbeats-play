@@ -383,7 +383,7 @@ function formatTime(ts: number) {
       <h2>创建房间</h2>
       <input v-model="codeInput" class="code-input" placeholder="房间码（留空自动生成）" maxlength="8" />
       <input v-model="passcode" placeholder="玩家入场口令（可选）" />
-      <input v-model="adminPass" type="password" placeholder="主持口令（建议设置，换设备可找回后台）" maxlength="32" />
+      <input v-model="adminPass" type="password" placeholder="主持口令（至少 6 位，换设备可找回后台）" maxlength="32" />
       <button class="full-width" @click="createRoom">创建房间</button>
       <p v-if="lastError" class="toast error">{{ lastError.message }}</p>
     </div>

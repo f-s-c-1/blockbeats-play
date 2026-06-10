@@ -15,6 +15,7 @@ export type StageType =
   | 'rulecard'
   | 'counter'
   | 'standstill' // 定格/木头人
+  | 'buzzer' // 抢答（听前奏抢唱/车窗观察赛）
 
 export interface Player {
   id: string
@@ -81,12 +82,14 @@ export type ClientEvent =
   | { t: 'lastman:eliminate'; targetId: string; actionId: string }
   | { t: 'lastman:revive'; targetId: string; actionId: string }
   | { t: 'lastman:finish'; actionId: string }
+  | { t: 'buzz'; actionId: string }
   | { t: 'vote:open'; candidateIds?: string[]; actionId: string }
   | { t: 'vote:cast'; targetId: string; actionId: string }
   | { t: 'vote:revealCount'; actionId: string }
   | { t: 'vote:revealSpy'; actionId: string }
   | { t: 'score:adjust'; teamId: string; delta: number; multiplier?: 1 | 2; actionId: string }
-  | { t: 'overlay:timer'; op: 'start' | 'pause' | 'reset'; durationSec?: number; actionId: string }
+  | { t: 'overlay:timer'; op: 'start' | 'pause' | 'resume' | 'reset'; durationSec?: number; actionId: string }
+  | { t: 'room:end'; actionId: string }
   | { t: 'overlay:announce'; text: string | null; actionId: string }
   | { t: 'overlay:scoreboard'; on: boolean; actionId: string }
   | { t: 'admin:toggleUplink'; open: boolean; actionId: string }
@@ -104,6 +107,7 @@ export interface PlayerView {
   role: 'player'
   me: { id: string; name: string; avatar: string; teamId: string | null }
   waiting: boolean // true = 等待页
+  ended?: boolean // 房间已结束
   stage: null | {
     type: StageType
     visibility: Visibility

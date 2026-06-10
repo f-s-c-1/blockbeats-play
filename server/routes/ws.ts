@@ -15,6 +15,8 @@ interface Session {
 
 // peer.id -> Session
 const sessions = new Map<string, Session>()
+// peer.id -> admin:rejoin 失败次数（防凭证爆破）
+const badTokenTries = new Map<string, number>()
 // code -> Set<peer>（用于广播）
 const roomPeers = new Map<string, Set<Peer>>()
 
@@ -89,7 +91,14 @@ export default defineWebSocketHandler({
       if (!code) return send(peer, { t: 'error', code: 'bad_code', message: '房间码格式错误' })
       const rt = getRoom(code)
       if (!rt) return send(peer, { t: 'error', code: 'notfound', message: '房间不存在' })
-      if (rt.adminToken !== ev.adminToken) return send(peer, { t: 'error', code: 'bad_token', message: '管理员凭证无效' })
+      if (rt.adminToken !== ev.adminToken) {
+        const tries = (badTokenTries.get(peer.id) || 0) + 1
+        badTokenTries.set(peer.id, tries)
+        send(peer, { t: 'error', code: 'bad_token', message: '管理员凭证无效' })
+        if (tries >= 5) { try { peer.close(4001, 'too_many_tries') } catch { /* 已断开 */ } }
+        return
+      }
+      badTokenTries.delete(peer.id)
       sessions.set(peer.id, { code, role: 'admin' })
       attachPeer(code, peer)
       send(peer, { t: 'room:state', ...buildAdminView(rt, true) })
@@ -126,13 +135,16 @@ export default defineWebSocketHandler({
       return
     }
 
-    // 被踢者：通知并断开
+    // 被踢者：通知、移出广播组并真正断开连接
     if (ev.t === 'admin:kick') {
       const targetPeers = [...(roomPeers.get(sess.code) || [])]
       for (const tp of targetPeers) {
         const ts = sessions.get(tp.id)
         if (ts?.role === 'player' && ts.playerId === ev.playerId) {
           send(tp, { t: 'kicked' })
+          detachPeer(sess.code, tp)
+          sessions.delete(tp.id)
+          try { tp.close(4000, 'kicked') } catch { /* 已断开 */ }
         }
       }
     }
@@ -142,6 +154,7 @@ export default defineWebSocketHandler({
   },
 
   close(peer) {
+    badTokenTries.delete(peer.id)
     const sess = sessions.get(peer.id)
     if (sess) {
       detachPeer(sess.code, peer)

@@ -1,6 +1,7 @@
 // 草原杯 · Room 状态机核心（纯逻辑，无 IO，便于测试）
 // 对应 PRD §4 状态机 + §7 全部动作 reducer + getVisibleView
 
+import { randomBytes } from 'node:crypto'
 import type {
   RoomState, Player, Team, ClientEvent, PlayerView, AdminView, AdminInbox,
 } from '../../shared/types'
@@ -76,7 +77,8 @@ export function createRoom(code: string, passcode?: string | null): RoomRuntime 
   return {
     state,
     inbox: { messages: [] },
-    adminToken: uid('admin'),
+    // 管理员凭证必须不可预测（uid 是时间戳+计数器，可被猜测）
+    adminToken: 'admin_' + randomBytes(32).toString('base64url'),
     seenActions: new Set(),
     lastMsgAt: {},
   }
@@ -232,13 +234,21 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
 
     case 'stage:set': {
       const guard = adminOnly(); if (guard) return guard
-      if (ev.stage.type === 'draw' && ev.stage.visibility === 'E') {
+      // 通用入口只允许 C 类同屏环节和 draw 的 E 类揭晓；
+      // A/B/D/F 类必须走各自专用事件（undercover:push / charades:push / vote:open / lastman:start），
+      // 防止误把含敏感字段的 payload 以 C 类全员透传。
+      const isDrawReveal = ev.stage.type === 'draw' && ev.stage.visibility === 'E'
+      if (!isDrawReveal && ev.stage.visibility !== 'C') {
+        return { ok: false, error: { code: 'bad_stage', message: '该可见性类型需走专用环节入口' } }
+      }
+      if (isDrawReveal) {
         const active = s.members.filter(p => !p.kicked)
         const assigned = active.filter(p => p.teamId)
         if (!s.teams.length || assigned.length !== active.length) {
           return { ok: false, error: { code: 'no_draw', message: '请先完成随机分队，再揭晓分组' } }
         }
       }
+      if (ev.stage.type === 'buzzer') ev.stage.payload.buzzes = []
       s.currentStage = { ...ev.stage, startedAt: Date.now() }
       s.phase = 'running'
       // 切环节：上行通道自动复位关（PRD §6）
@@ -290,14 +300,32 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
 
     case 'charades:push': {
       const guard = adminOnly(); if (guard) return guard
-      const actor = findPlayer(s, ev.actorId)
-      if (!actor || actor.kicked) return { ok: false, error: { code: 'notfound', message: '比划者不存在' } }
+      const performer = findPlayer(s, ev.actorId)
+      if (!performer || performer.kicked) return { ok: false, error: { code: 'notfound', message: '比划者不存在' } }
+      const durationSec = ev.durationSec || 60
       s.currentStage = {
         type: 'charades', visibility: 'B',
-        payload: { actorId: ev.actorId, word: ev.word, durationSec: ev.durationSec || 60 },
+        payload: { actorId: ev.actorId, word: ev.word, durationSec },
         startedAt: Date.now(),
       }
+      // 发词即起表，全场倒计时同步跑，主持人不用再手动开计时器
+      const dur = durationSec * 1000
+      s.overlays.timer = { endsAt: Date.now() + dur, paused: false, remaining: dur }
       s.phase = 'running'
+      break
+    }
+
+    case 'buzz': {
+      const playerId = playerOnly()
+      if (typeof playerId !== 'string') return playerId
+      const st = s.currentStage
+      if (!st || st.type !== 'buzzer') return { ok: false, error: { code: 'no_buzzer', message: '当前无抢答' } }
+      const p = findPlayer(s, playerId)
+      if (!p || p.kicked) return { ok: false, error: { code: 'notfound', message: '未加入' } }
+      const buzzes = (st.payload.buzzes ||= []) as { playerId: string; name: string; avatar: string; ts: number }[]
+      if (!buzzes.some(b => b.playerId === playerId)) {
+        buzzes.push({ playerId, name: p.name, avatar: p.avatar, ts: Date.now() })
+      }
       break
     }
 
@@ -439,6 +467,9 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
       } else if (ev.op === 'pause') {
         const tm = s.overlays.timer
         if (tm && !tm.paused) { tm.remaining = Math.max(0, tm.endsAt - Date.now()); tm.paused = true }
+      } else if (ev.op === 'resume') {
+        const tm = s.overlays.timer
+        if (tm && tm.paused) { tm.endsAt = Date.now() + tm.remaining; tm.paused = false }
       } else if (ev.op === 'reset') {
         s.overlays.timer = null
       }
@@ -454,6 +485,15 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
     case 'overlay:scoreboard': {
       const guard = adminOnly(); if (guard) return guard
       s.overlays.scoreboard = ev.on
+      break
+    }
+
+    case 'room:end': {
+      const guard = adminOnly(); if (guard) return guard
+      s.phase = 'ended'
+      s.currentStage = null
+      s.overlays = {}
+      s.uplinkOpen = false
       break
     }
 
@@ -503,6 +543,7 @@ export function buildPlayerView(rt: RoomRuntime, playerId: string): PlayerView {
     uplinkOpen: s.uplinkOpen,
   }
   if (!me) return base
+  if (s.phase === 'ended') { base.ended = true; return base }
 
   const st = s.currentStage
   if (!st) return base // 等待页（overlay 仍显示）
@@ -528,8 +569,11 @@ export function buildPlayerView(rt: RoomRuntime, playerId: string): PlayerView {
 function visibleStageContent(s: RoomState, st: RoomState['currentStage'], me: Player): Record<string, any> {
   if (!st) return {}
   switch (st.visibility) {
-    case 'C':
-      return st.payload // 全员同屏
+    case 'C': {
+      // 全员同屏，但兜底剔除敏感字段——防止未来某个环节把私密数据误塞进 C 类 payload
+      const { assignment, ballots, voterIds, ...safe } = st.payload
+      return safe
+    }
     case 'B':
       return me.id === st.payload.actorId
         ? { role: 'actor', word: st.payload.word, durationSec: st.payload.durationSec }
@@ -539,14 +583,19 @@ function visibleStageContent(s: RoomState, st: RoomState['currentStage'], me: Pl
       return inGame ? { myWord: st.payload.assignment[me.id] } : { notInGame: true }
     }
     case 'D': {
+      // 投票进度只透出"已投几人"，不透出票数分布
+      const votedCount = Object.keys((st.payload.ballots || {}) as Record<string, string>).length
+      const totalVoters = ((st.payload.voterIds || []) as string[]).length
       if (st.payload.voterIds?.length && !st.payload.voterIds.includes(me.id)) {
-        return { notInVote: true, candidates: candidateInfo(s, st.payload.candidates) }
+        return { notInVote: true, votedCount, totalVoters, candidates: candidateInfo(s, st.payload.candidates) }
       }
       const voted = st.payload.ballots && st.payload.ballots[me.id]
       if (st.payload.revealed === 'count') {
         return { revealed: 'count', tally: st.payload.tally, candidates: candidateInfo(s, st.payload.candidates) }
       }
-      return voted ? { voted: true } : { candidates: candidateInfo(s, st.payload.candidates) }
+      return voted
+        ? { voted: true, votedCount, totalVoters }
+        : { votedCount, totalVoters, candidates: candidateInfo(s, st.payload.candidates) }
     }
     case 'F': {
       return {

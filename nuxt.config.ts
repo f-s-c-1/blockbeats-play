@@ -24,7 +24,13 @@ export default defineNuxtConfig({
       title: '草原杯',
       meta: [
         { name: 'viewport', content: 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no' },
-        { name: 'theme-color', content: '#0f172a' },
+        { name: 'theme-color', content: '#15100a' },
+      ],
+      link: [
+        // 展示字体（站酷快乐体 + Baloo 2）：弱网加载失败时回落系统粗体，不阻塞渲染
+        { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
+        { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
+        { rel: 'stylesheet', href: 'https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&family=Baloo+2:wght@600;800&display=swap' },
       ],
     },
   },

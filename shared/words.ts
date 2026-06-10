@@ -122,7 +122,7 @@ export const UNDERCOVER_PAIRS: WordPair[] = [
 ]
 
 // 你比我猜 / 你画我猜 词库（带分类）
-export const CHARADES_CATEGORIES = ['内蒙', '动物', '动作', '物品', '成语'] as const
+export const CHARADES_CATEGORIES = ['搞笑', '内蒙', '动物', '动作', '物品', '成语'] as const
 export type CharadesCategory = (typeof CHARADES_CATEGORIES)[number]
 
 export interface CharadesWord {
@@ -134,6 +134,11 @@ const charades = (category: CharadesCategory, words: string[]): CharadesWord[] =
   words.map(text => ({ text, category }))
 
 export const CHARADES_WORDS: CharadesWord[] = [
+  ...charades('搞笑', [
+    '广场舞', '东北二人转', '科目三', '蹦迪', '社会摇', '老板画饼', '周一上班', '抢红包', '双十一剁手', '直播带货',
+    '深夜泡面', '减肥第一天', '迟到打卡', '视频会议忘关麦', '落枕', '闪到腰', '被蚊子咬', '公鸡打鸣', '老母鸡下蛋', '落汤鸡',
+    '大爷遛鸟', '大妈抢购', '自拍一百张', '抢演唱会门票', '醉拳',
+  ]),
   ...charades('内蒙', [
     '套马杆', '烤全羊', '骑马', '摔跤', '挤奶', '风车', '火山喷发', '举哈达', '敬酒', '蒙古舞', '射箭', '骆驼',
     '蒙古包', '马', '羊群', '风力发电机', '火山', '奶茶', '勒勒车', '敖包', '马头琴',

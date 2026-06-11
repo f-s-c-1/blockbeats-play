@@ -16,7 +16,7 @@ function joinAsPlayer() {
         <span class="huge">🏇</span>
         <span class="hero-side">⛺</span>
       </div>
-      <h1>草原杯</h1>
+      <h1>燃团</h1>
       <p class="hero-tagline">一部手机 · 四十个人 · 一晚上的尖叫</p>
       <p class="muted">主持人控节奏，你的手机就是举牌道具</p>
     </div>

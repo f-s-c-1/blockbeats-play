@@ -1,4 +1,4 @@
-// 草原杯 · Room 状态机核心（纯逻辑，无 IO，便于测试）
+// 燃团 · Room 状态机核心（纯逻辑，无 IO，便于测试）
 // 对应 PRD §4 状态机 + §7 全部动作 reducer + getVisibleView
 
 import { randomBytes } from 'node:crypto'

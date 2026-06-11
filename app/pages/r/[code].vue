@@ -79,7 +79,7 @@ const stageLabels: Record<string, string> = {
   undercover: '谁是卧底',
   charades: '你比我猜',
   vote: '投票',
-  lastman: '拽尾巴',
+  lastman: '吃鸡淘汰赛',
   reveal: '揭晓',
   rulecard: '规则卡',
   counter: '计数挑战',
@@ -171,7 +171,7 @@ const peekWord = ref(false)
 const peekSecret = ref(false)
 
 // 内鬼伪装模式：连点自己头像 3 次切换。开启后身份面板按住显示的内容
-// 和普通牧民完全一致（应对"把屏幕给我看"的查岗）。
+// 和吃瓜群众完全一致（应对"把屏幕给我看"的查岗）。
 // 手势只写在内鬼的秘密面板里；普通人连点无任何反应和提示，不会暴露机制。
 const DISGUISE_KEY = `caoyuan:${code}:disguise`
 const disguised = ref(false)
@@ -305,7 +305,7 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
   <div v-else-if="phase === 'naming'" class="center">
     <div class="home-logo">
       <div class="huge">{{ avatar }}</div>
-      <h1>加入草原杯</h1>
+      <h1>加入燃团</h1>
       <p class="muted">房间 <span class="room-code">{{ code }}</span> · {{ connected ? '已连接' : '连接中…' }}</p>
     </div>
     <div class="card home-shell">
@@ -371,7 +371,7 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
       <div>
         <div class="huge">🌅</div>
         <h1>本场活动已结束</h1>
-        <p class="muted">感谢参与草原杯，路上注意安全！</p>
+        <p class="muted">感谢参与本场团建，回程注意安全！</p>
       </div>
     </div>
 
@@ -401,12 +401,12 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
         >
           <template v-if="peekSecret">
             <template v-if="showSpyContent">
-              <h2>🤫 你是草原内鬼</h2>
+              <h2>🤫 你是内鬼</h2>
               <p>{{ pv.secret?.task || '潜伏到最后别被认出来' }}</p>
-              <p class="muted">查岗反制：悄悄连点左上角你的头像 3 次，这块会伪装成“普通牧民”；再连点 3 次还原。</p>
+              <p class="muted">查岗反制：悄悄连点左上角你的头像 3 次，这块会伪装成“吃瓜群众”；再连点 3 次还原。</p>
             </template>
             <template v-else>
-              <h2>🐑 你是普通牧民</h2>
+              <h2>🍉 你是吃瓜群众</h2>
               <p>没有特殊任务，留意身边谁是内鬼。</p>
             </template>
           </template>
@@ -448,12 +448,12 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
         >
           <template v-if="peekSecret">
             <template v-if="showSpyContent">
-              <h2>🤫 你是草原内鬼</h2>
+              <h2>🤫 你是内鬼</h2>
               <p>{{ pv.secret?.task || '潜伏到最后别被认出来' }}</p>
-              <p class="muted">查岗反制：悄悄连点左上角你的头像 3 次，这块会伪装成“普通牧民”；再连点 3 次还原。</p>
+              <p class="muted">查岗反制：悄悄连点左上角你的头像 3 次，这块会伪装成“吃瓜群众”；再连点 3 次还原。</p>
             </template>
             <template v-else>
-              <h2>🐑 你是普通牧民</h2>
+              <h2>🍉 你是吃瓜群众</h2>
               <p>没有特殊任务，留意身边谁是内鬼。</p>
             </template>
           </template>
@@ -523,10 +523,10 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
         </template>
         <template v-else>
           <div>
-            <div class="stage-kicker">拽尾巴 · 全场剩 {{ pv.stage.content.aliveCount }} 人</div>
+            <div class="stage-kicker">吃鸡淘汰赛 · 全场剩 {{ pv.stage.content.aliveCount }} 人</div>
             <div class="huge">{{ pv.stage.content.alive ? '🟢' : '💀' }}</div>
             <h1>{{ pv.stage.content.alive ? '你仍在场上' : '你已淘汰' }}</h1>
-            <p class="muted">{{ pv.stage.content.alive ? '继续保护你的尾巴。' : '等待复活或下一轮。' }}</p>
+            <p class="muted">{{ pv.stage.content.alive ? '苟住！活到最后就是吃鸡。' : '等待复活或下一轮。' }}</p>
           </div>
         </template>
       </div>
@@ -662,7 +662,7 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
         <div>
           <div class="stage-kicker">身份揭晓</div>
           <div class="huge">🕵️</div>
-          <h1>草原内鬼是</h1>
+          <h1>内鬼是</h1>
           <div class="list" style="justify-content:center">
             <span v-for="s in pv.stage.content.spies" :key="s.id" class="member">
               <span class="em">{{ s.avatar }}</span>{{ s.name }}

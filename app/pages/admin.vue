@@ -3,7 +3,7 @@ import { useRoom } from '../composables/useRoom'
 import type { AdminView } from '@shared/types'
 import { UNDERCOVER_PAIRS, CHARADES_WORDS, SPY_TASKS, WORD_CATEGORIES, CHARADES_CATEGORIES } from '@shared/words'
 import { EMOJI_QUIZ, EMOJI_QUIZ_CATEGORIES } from '@shared/words'
-import { GAME_RULES, GAME_CATEGORIES } from '@shared/games'
+import { GAME_RULES, GAME_CATEGORIES, PUNISHMENTS } from '@shared/games'
 
 const { connected, view, lastError, created, connect, send } = useRoom()
 const phase = ref<'setup' | 'console'>('setup')
@@ -79,7 +79,7 @@ const stageLabels: Record<string, string> = {
   undercover: '谁是卧底',
   charades: '你比我猜',
   vote: '投票',
-  lastman: '拽尾巴',
+  lastman: '吃鸡淘汰赛',
   storymix: '故事组合',
   wheel: '点名转盘',
   task: '任务',
@@ -171,7 +171,7 @@ const navItems = [
   { id: 'whoami', label: '猜猜我是谁' },
   { id: 'storymix', label: '故事组合' },
   { id: 'wheel', label: '点名转盘' },
-  { id: 'lastman', label: '拽尾巴' },
+  { id: 'lastman', label: '吃鸡淘汰' },
   { id: 'vote', label: '投票' },
   { id: 'score', label: '积分' },
   { id: 'general', label: '通用' },
@@ -242,7 +242,20 @@ function setCopyState(state: typeof copyState.value) {
 async function copyLink() {
   if (!joinLink.value) return
   try {
-    await navigator.clipboard?.writeText(joinLink.value)
+    // clipboard API 仅 HTTPS/localhost 可用；局域网 http 下退回 execCommand
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(joinLink.value)
+    } else {
+      const ta = document.createElement('textarea')
+      ta.value = joinLink.value
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(ta)
+      if (!ok) throw new Error('copy failed')
+    }
     setCopyState('copied')
   } catch {
     setCopyState('failed')
@@ -376,7 +389,7 @@ function toggleUcOut(id: string) {
   send({ t: 'stage:action', kind: ucOut.value.includes(id) ? 'uneliminate' : 'eliminate', targetId: id })
 }
 
-// —— 拽尾巴 ——
+// —— 吃鸡淘汰赛 ——
 function startLastman() { send({ t: 'lastman:start' }) }
 function eliminate(id: string) { send({ t: 'lastman:eliminate', targetId: id }) }
 function revive(id: string) { send({ t: 'lastman:revive', targetId: id }) }
@@ -395,6 +408,23 @@ const smHistory = computed<{ who: string; where: string; what: string }[]>(() =>
 const wheelScope = ref('all')
 function spinWheel() { send({ t: 'wheel:spin', scope: wheelScope.value }) }
 const wheelWinner = computed(() => stage.value?.type === 'wheel' ? stage.value.payload.winner : null)
+
+// —— 惩罚库：随机抽一条，可推上全场大屏 ——
+const punishment = ref('')
+const punishUsed = new Set<string>()
+function drawPunishment() {
+  let pool = PUNISHMENTS.filter(x => !punishUsed.has(x))
+  if (!pool.length) { punishUsed.clear(); pool = PUNISHMENTS }
+  punishment.value = pool[Math.floor(Math.random() * pool.length)]
+  punishUsed.add(punishment.value)
+}
+function pushPunishment(forName?: string) {
+  if (!punishment.value) drawPunishment()
+  send({
+    t: 'stage:set',
+    stage: { type: 'rulecard', visibility: 'C', payload: { title: forName ? `😈 ${forName} 的惩罚` : '😈 惩罚时间', text: punishment.value } },
+  })
+}
 
 // —— emoji 出题（出进抢答环节，答案只主持人可见）——
 const eqCategory = ref<string>(EMOJI_QUIZ_CATEGORIES[0])
@@ -895,6 +925,7 @@ function formatTime(ts: number) {
           <div v-if="wheelWinner" class="banner">
             🎉 天选之子：{{ wheelWinner.avatar }} {{ wheelWinner.name }}
             <button v-if="memberTeamId(wheelWinner.id)" class="sm" @click="awardMemberTeam(wheelWinner.id, 1)">TA队 +1</button>
+            <button class="sm danger" @click="drawPunishment(); pushPunishment(wheelWinner.name)">😈 抽惩罚给TA</button>
           </div>
         </div>
       </section>
@@ -902,7 +933,7 @@ function formatTime(ts: number) {
       <section v-show="activeTab === 'lastman'" id="lastman" class="card">
         <div class="section-head">
           <div>
-            <h2>拽尾巴淘汰赛</h2>
+            <h2>吃鸡淘汰赛</h2>
             <p class="muted">点成员切换淘汰/复活，剩 1 人自动成为冠军。</p>
           </div>
           <div class="section-actions">
@@ -1084,6 +1115,17 @@ function formatTime(ts: number) {
           <p class="muted">「{{ mbSelected.name }}：{{ mbSelected.playerText }}」</p>
         </div>
         <div v-else class="empty-state">点上面的游戏名查看玩法。</div>
+        <div class="panel">
+          <div class="section-head">
+            <h2 style="margin:0">😈 惩罚抽取</h2>
+            <div class="section-actions">
+              <button class="sm warning" @click="drawPunishment">🎲 抽一个惩罚</button>
+              <button class="sm" :disabled="!punishment" @click="pushPunishment()">推上全场大屏</button>
+            </div>
+          </div>
+          <p v-if="punishment" style="font-size:17px;font-weight:700">{{ punishment }}</p>
+          <p v-else class="muted">{{ PUNISHMENTS.length }} 条职场安全惩罚：输了的、被点名的，抽一个当场执行。</p>
+        </div>
       </div>
     </section>
 

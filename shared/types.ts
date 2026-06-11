@@ -1,4 +1,4 @@
-// 草原杯 · 前后端共享类型（对应 PRD §4 状态机 + §7.16 事件契约）
+// 燃团 · 前后端共享类型（对应 PRD §4 状态机 + §7.16 事件契约）
 
 export type Visibility = 'A' | 'B' | 'C' | 'D' | 'E' | 'F'
 export type SecretRole = 'normal' | 'spy'
@@ -158,5 +158,5 @@ export type ServerEvent =
 // 草原主题 emoji 池（PRD §7.2）
 export const AVATAR_POOL = ['🐺', '🦌', '🐎', '🐑', '🦅', '🐫', '🌟', '🔥', '⛺', '🏹', '🍶', '🎪', '🌾', '🐂', '🦬', '🪕']
 
-// 队名备选（PRD 手册）
-export const TEAM_NAME_POOL = ['苍狼队', '白鹿队', '草原雄鹰', '套马汉子', '风车队', '奶茶突击队']
+// 队名备选
+export const TEAM_NAME_POOL = ['王炸队', '卷王突击队', '气氛组', '夺冠预定队', '嘎嘎乱杀队', '躺赢小分队', '苍狼队', '奶茶突击队']

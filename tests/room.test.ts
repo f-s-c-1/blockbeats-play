@@ -326,7 +326,7 @@ describe('内鬼任务通道', () => {
   })
 })
 
-describe('拽尾巴淘汰赛', () => {
+describe('吃鸡淘汰赛', () => {
   it('淘汰至 1 人自动产生冠军，复活则清空冠军', () => {
     const rt = createRoom('TEST')
     const ids = joinPlayers(rt, 3)

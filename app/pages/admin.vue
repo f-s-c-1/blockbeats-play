@@ -2,6 +2,7 @@
 import { useRoom } from '../composables/useRoom'
 import type { AdminView } from '@shared/types'
 import { UNDERCOVER_PAIRS, CHARADES_WORDS, SPY_TASKS, WORD_CATEGORIES, CHARADES_CATEGORIES } from '@shared/words'
+import { EMOJI_QUIZ, EMOJI_QUIZ_CATEGORIES } from '@shared/words'
 import { GAME_RULES, GAME_CATEGORIES } from '@shared/games'
 
 const { connected, view, lastError, created, connect, send } = useRoom()
@@ -79,6 +80,8 @@ const stageLabels: Record<string, string> = {
   charades: '你比我猜',
   vote: '投票',
   lastman: '拽尾巴',
+  storymix: '故事组合',
+  wheel: '点名转盘',
   task: '任务',
   reveal: '内鬼揭晓',
   rulecard: '规则卡',
@@ -104,6 +107,8 @@ const activeSection = computed(() => {
     case 'charades': return 'charades'
     case 'whoami': return 'whoami'
     case 'lastman': return 'lastman'
+    case 'storymix': return 'storymix'
+    case 'wheel': return 'wheel'
     case 'vote':
     case 'reveal': return 'vote'
     case 'rulecard':
@@ -164,6 +169,8 @@ const navItems = [
   { id: 'undercover', label: '卧底' },
   { id: 'charades', label: '你比我猜' },
   { id: 'whoami', label: '猜猜我是谁' },
+  { id: 'storymix', label: '故事组合' },
+  { id: 'wheel', label: '点名转盘' },
   { id: 'lastman', label: '拽尾巴' },
   { id: 'vote', label: '投票' },
   { id: 'score', label: '积分' },
@@ -375,8 +382,49 @@ function eliminate(id: string) { send({ t: 'lastman:eliminate', targetId: id }) 
 function revive(id: string) { send({ t: 'lastman:revive', targetId: id }) }
 function finishLastman() { send({ t: 'lastman:finish' }) }
 
+// —— 疯狂故事组合 ——
+function startStorymix() { send({ t: 'storymix:start' }) }
+function drawStory() { send({ t: 'storymix:draw' }) }
+const smSubmissions = computed(() =>
+  stage.value?.type === 'storymix' ? (stage.value.payload.submissions || {}) as Record<string, { who: string; where: string; what: string }> : null)
+const smStory = computed(() => stage.value?.type === 'storymix' ? stage.value.payload.story : null)
+const smHistory = computed<{ who: string; where: string; what: string }[]>(() =>
+  stage.value?.type === 'storymix' ? [...(stage.value.payload.history || [])].reverse() : [])
+
+// —— 随机点名转盘 ——
+const wheelScope = ref('all')
+function spinWheel() { send({ t: 'wheel:spin', scope: wheelScope.value }) }
+const wheelWinner = computed(() => stage.value?.type === 'wheel' ? stage.value.payload.winner : null)
+
+// —— emoji 出题（出进抢答环节，答案只主持人可见）——
+const eqCategory = ref<string>(EMOJI_QUIZ_CATEGORIES[0])
+const eqAnswer = ref('') // 当前题答案，仅留在管理端本地，不进 payload
+const eqUsed = new Set<string>()
+function pushEmojiQuiz() {
+  let pool = EMOJI_QUIZ.filter(q => q.category === eqCategory.value && !eqUsed.has(q.clue))
+  if (!pool.length) { eqUsed.clear(); pool = EMOJI_QUIZ.filter(q => q.category === eqCategory.value) }
+  const q = pool[Math.floor(Math.random() * pool.length)]
+  eqUsed.add(q.clue)
+  eqAnswer.value = q.answer
+  send({ t: 'stage:set', stage: { type: 'buzzer', visibility: 'C', payload: { title: q.clue } } })
+}
+
 // —— 投票 ——
 function openVote() { send({ t: 'vote:open' }) }
+
+// 选项投票：输入框用 / 分隔选项
+const voteOptionsText = ref('')
+const voteQuestion = ref('')
+function fillTeamsAsOptions() { voteOptionsText.value = teams.value.map(t => t.name).join('/') }
+function openOptionVote() {
+  const options = voteOptionsText.value.split('/').map(x => x.trim()).filter(Boolean)
+  if (options.length < 2) return
+  send({ t: 'vote:open', options, question: voteQuestion.value.trim() || undefined })
+}
+const voteOptions = computed<string[] | null>(() =>
+  stage.value?.type === 'vote' ? (stage.value.payload.options || null) : null)
+// 计票行的显示名：选项模式显示选项文本，否则显示成员名
+const voteLabel = (id: string) => voteOptions.value ? (voteOptions.value[Number(id)] || id) : memberName(id)
 function revealCount() { send({ t: 'vote:revealCount' }) }
 function revealSpy() {
   // 不可撤销的高危操作：全场立即翻牌
@@ -798,6 +846,54 @@ function formatTime(ts: number) {
     </div>
 
     <div class="split-grid">
+      <section v-show="activeTab === 'storymix'" id="storymix" class="card">
+        <div class="section-head">
+          <div>
+            <h2>疯狂故事组合</h2>
+            <p class="muted">全员各投一组「人名/地点/在做什么」，随机跨人拼句开奖："小王 在火山口 跳广场舞"。</p>
+          </div>
+          <div class="section-actions">
+            <button class="sm" @click="startStorymix">开始收集</button>
+            <button class="sm warning" :disabled="!smSubmissions || Object.keys(smSubmissions).length < 2" @click="drawStory">🎲 抽一条</button>
+          </div>
+        </div>
+        <div v-if="smSubmissions" class="grid">
+          <p class="muted">已收 {{ Object.keys(smSubmissions).length }}/{{ members.length }} 份（明细仅你可见）：</p>
+          <div v-for="(sub, id) in smSubmissions" :key="id" class="score-row">
+            <span>{{ memberName(id) }}</span>
+            <span class="muted">{{ sub.who }} · {{ sub.where }} · {{ sub.what }}</span>
+          </div>
+          <div v-if="smStory" class="banner">🎉 {{ smStory.who }} 在{{ smStory.where }} {{ smStory.what }}</div>
+          <div v-if="smHistory.length > 1" class="panel">
+            <h3>开奖历史</h3>
+            <p v-for="(h, i) in smHistory" :key="i" class="muted">{{ h.who }} 在{{ h.where }} {{ h.what }}</p>
+          </div>
+        </div>
+        <div v-else class="empty-state">点「开始收集」，玩家手机会出现投稿表单。</div>
+      </section>
+
+      <section v-show="activeTab === 'wheel'" id="wheel" class="card">
+        <div class="section-head">
+          <div>
+            <h2>随机点名转盘</h2>
+            <p class="muted">锦鲤抽奖、点名表演、大冒险点人——全场手机同步滚动，定格在同一个天选之子。</p>
+          </div>
+        </div>
+        <div class="grid">
+          <div class="section-actions">
+            <select v-model="wheelScope">
+              <option value="all">全员</option>
+              <option v-for="t in teams" :key="t.id" :value="t.id">{{ t.name }}</option>
+            </select>
+            <button class="sm" :disabled="members.length < 2" @click="spinWheel">🎡 开始抽取</button>
+          </div>
+          <div v-if="wheelWinner" class="banner">
+            🎉 天选之子：{{ wheelWinner.avatar }} {{ wheelWinner.name }}
+            <button v-if="memberTeamId(wheelWinner.id)" class="sm" @click="awardMemberTeam(wheelWinner.id, 1)">TA队 +1</button>
+          </div>
+        </div>
+      </section>
+
       <section v-show="activeTab === 'lastman'" id="lastman" class="card">
         <div class="section-head">
           <div>
@@ -842,9 +938,17 @@ function formatTime(ts: number) {
             <button class="sm danger" @click="revealSpy">揭晓内鬼</button>
           </div>
         </div>
+        <div class="grid" style="margin-bottom:10px">
+          <input v-model="voteQuestion" placeholder="选项投票题目（如：哪件事是假的？）" maxlength="60" />
+          <div class="section-actions">
+            <input v-model="voteOptionsText" placeholder="选项用 / 分隔（如：第一件/第二件/第三件）" style="flex:1 1 200px" />
+            <button class="sm ghost" :disabled="!teams.length" @click="fillTeamsAsOptions">按队填入</button>
+            <button class="sm" :disabled="voteOptionsText.split('/').filter(x => x.trim()).length < 2" @click="openOptionVote">开选项投票</button>
+          </div>
+        </div>
         <div v-if="voteTally && Object.keys(voteTally).length" class="grid">
           <div v-for="(n, id) in voteTally" :key="id" class="score-row">
-            <span>{{ memberName(id as string) }} <strong>{{ n }} 票</strong></span>
+            <span>{{ voteLabel(id as string) }} <strong>{{ n }} 票</strong></span>
             <button v-if="memberTeamId(id as string)" class="sm ghost" @click="awardMemberTeam(id as string, 1)">TA队 +1</button>
           </div>
         </div>
@@ -899,6 +1003,13 @@ function formatTime(ts: number) {
           <div class="section-actions">
             <input v-model="buzzerTitle" placeholder="抢答标题（如：听前奏抢唱）" />
             <button class="sm" @click="startBuzzer">{{ stage?.type === 'buzzer' ? '重新抢答' : '开始抢答' }}</button>
+          </div>
+          <div class="section-actions">
+            <select v-model="eqCategory">
+              <option v-for="c in EMOJI_QUIZ_CATEGORIES" :key="c" :value="c">emoji 猜{{ c }}</option>
+            </select>
+            <button class="sm warning" @click="pushEmojiQuiz">{{ eqAnswer ? '下一题' : '出题并开抢答' }}</button>
+            <span v-if="eqAnswer" class="tag info">答案：{{ eqAnswer }}（仅你可见）</span>
           </div>
           <div v-if="stage?.type === 'buzzer'" class="grid">
             <p class="muted">抢答顺序（{{ buzzes.length }} 人）：</p>

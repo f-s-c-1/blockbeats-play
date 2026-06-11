@@ -404,6 +404,75 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
       break
     }
 
+    case 'storymix:start': {
+      const guard = adminOnly(); if (guard) return guard
+      s.currentStage = {
+        type: 'storymix', visibility: 'C',
+        payload: { submissions: {}, story: null, history: [] },
+        startedAt: Date.now(),
+      }
+      s.phase = 'running'
+      break
+    }
+
+    case 'storymix:submit': {
+      const playerId = playerOnly()
+      if (typeof playerId !== 'string') return playerId
+      const st = s.currentStage
+      if (!st || st.type !== 'storymix') return { ok: false, error: { code: 'no_storymix', message: '当前没有故事收集' } }
+      const p = findPlayer(s, playerId)
+      if (!p || p.kicked) return { ok: false, error: { code: 'notfound', message: '未加入' } }
+      const who = (ev.who || '').trim().slice(0, 20)
+      const where = (ev.where || '').trim().slice(0, 20)
+      const what = (ev.what || '').trim().slice(0, 20)
+      if (!who || !where || !what) return { ok: false, error: { code: 'empty', message: '三项都要填' } }
+      // 可覆盖重交，开奖前内容只有管理员可见
+      st.payload.submissions[playerId] = { who, where, what }
+      break
+    }
+
+    case 'storymix:draw': {
+      const guard = adminOnly(); if (guard) return guard
+      const st = s.currentStage
+      if (!st || st.type !== 'storymix') return { ok: false, error: { code: 'no_storymix', message: '当前没有故事收集' } }
+      const subs = st.payload.submissions as Record<string, { who: string; where: string; what: string }>
+      const ids = Object.keys(subs)
+      if (ids.length < 2) return { ok: false, error: { code: 'too_few', message: '至少 2 份投稿才能开奖' } }
+      // 三段尽量来自不同人，避免抽回某人的原句
+      const order = shuffle(ids)
+      const story = {
+        who: subs[order[0]].who,
+        where: subs[order[1 % order.length]].where,
+        what: subs[order[2 % order.length]].what,
+        ts: Date.now(),
+      }
+      st.payload.story = story
+      st.payload.history = [...(st.payload.history || []), story].slice(-20)
+      break
+    }
+
+    case 'wheel:spin': {
+      const guard = adminOnly(); if (guard) return guard
+      let pool = s.members.filter(p => !p.kicked)
+      if (ev.scope && ev.scope !== 'all') pool = pool.filter(p => p.teamId === ev.scope)
+      if (pool.length < 2) return { ok: false, error: { code: 'too_few', message: '抽取范围至少 2 人' } }
+      // CSPRNG 选人，全场手机按同一序列播放动画，定格在同一个人
+      const winner = pool[randomBytes(4).readUInt32BE(0) % pool.length]
+      const order = shuffle(pool).map(p => ({ id: p.id, name: p.name, avatar: p.avatar }))
+      s.currentStage = {
+        type: 'wheel', visibility: 'C',
+        payload: {
+          order,
+          winnerId: winner.id,
+          winner: { id: winner.id, name: winner.name, avatar: winner.avatar },
+          spinId: uid('spin'), // 每次抽取都不同，驱动前端重播动画
+        },
+        startedAt: Date.now(),
+      }
+      s.phase = 'running'
+      break
+    }
+
     case 'lastman:start': {
       const guard = adminOnly(); if (guard) return guard
       const ids = ev.participantIds && ev.participantIds.length
@@ -464,6 +533,28 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
 
     case 'vote:open': {
       const guard = adminOnly(); if (guard) return guard
+      // 选项模式：投"事/队/作品"而不是人（真真假假、最佳广告、最佳造型……）
+      if (ev.options) {
+        const options = ev.options.map(o => (o || '').trim().slice(0, 30)).filter(Boolean)
+        if (options.length < 2 || options.length > 6) {
+          return { ok: false, error: { code: 'bad_options', message: '选项需 2-6 个' } }
+        }
+        const voterIds = s.members.filter(p => !p.kicked).map(p => p.id)
+        s.currentStage = {
+          type: 'vote', visibility: 'D',
+          payload: {
+            // 候选用选项下标字符串，票箱/进度/公布票数逻辑全部复用
+            candidates: options.map((_, i) => String(i)),
+            options,
+            question: (ev.question || '').trim().slice(0, 60),
+            voterIds,
+            ballots: {} as Record<string, string>,
+          },
+          startedAt: Date.now(),
+        }
+        s.phase = 'running'
+        break
+      }
       const candidates = ev.candidateIds && ev.candidateIds.length
         ? uniqueIds(ev.candidateIds).filter(id => {
             const p = findPlayer(s, id)
@@ -666,10 +757,20 @@ function visibleStageContent(s: RoomState, st: RoomState['currentStage'], me: Pl
     }
   }
 
+  // 疯狂故事组合：投稿明细只有管理员可见，玩家只拿到自己的提交状态、总份数和当前开奖结果
+  if (st.type === 'storymix') {
+    const subs = (st.payload.submissions || {}) as Record<string, unknown>
+    return {
+      submitted: !!subs[me.id],
+      submittedCount: Object.keys(subs).length,
+      story: st.payload.story || null,
+    }
+  }
+
   switch (st.visibility) {
     case 'C': {
       // 全员同屏，但兜底剔除敏感字段——防止未来某个环节把私密数据误塞进 C 类 payload
-      const { assignment, ballots, voterIds, ...safe } = st.payload
+      const { assignment, ballots, voterIds, submissions, history, ...safe } = st.payload
       return safe
     }
     case 'B':
@@ -687,16 +788,21 @@ function visibleStageContent(s: RoomState, st: RoomState['currentStage'], me: Pl
       // 投票进度只透出"已投几人"，不透出票数分布
       const votedCount = Object.keys((st.payload.ballots || {}) as Record<string, string>).length
       const totalVoters = ((st.payload.voterIds || []) as string[]).length
+      // 选项模式下"候选"渲染为选项文本（id 即下标），其余逻辑同投人
+      const renderCandidates = () => st.payload.options
+        ? (st.payload.options as string[]).map((label, i) => ({ id: String(i), name: label, avatar: '🔘' }))
+        : candidateInfo(s, st.payload.candidates)
+      const extra = { question: st.payload.question || undefined, isOptions: !!st.payload.options }
       if (st.payload.voterIds?.length && !st.payload.voterIds.includes(me.id)) {
-        return { notInVote: true, votedCount, totalVoters, candidates: candidateInfo(s, st.payload.candidates) }
+        return { ...extra, notInVote: true, votedCount, totalVoters, candidates: renderCandidates() }
       }
       const voted = st.payload.ballots && st.payload.ballots[me.id]
       if (st.payload.revealed === 'count') {
-        return { revealed: 'count', tally: st.payload.tally, candidates: candidateInfo(s, st.payload.candidates) }
+        return { ...extra, revealed: 'count', tally: st.payload.tally, candidates: renderCandidates() }
       }
       return voted
-        ? { voted: true, votedCount, totalVoters }
-        : { votedCount, totalVoters, candidates: candidateInfo(s, st.payload.candidates) }
+        ? { ...extra, voted: true, votedCount, totalVoters }
+        : { ...extra, votedCount, totalVoters, candidates: renderCandidates() }
     }
     case 'F': {
       return {

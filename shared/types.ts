@@ -17,6 +17,8 @@ export type StageType =
   | 'standstill' // 定格/木头人
   | 'buzzer' // 抢答（听前奏抢唱/车窗观察赛）
   | 'whoami' // 猜猜我是谁（头带游戏：自己的词只有别人能看到）
+  | 'storymix' // 疯狂故事组合（全员投稿 人名/地点/在做什么，随机拼句开奖）
+  | 'wheel' // 随机点名转盘（全员同步动画定格天选之子）
 
 export interface Player {
   id: string
@@ -84,12 +86,17 @@ export type ClientEvent =
   | { t: 'undercover:push'; wordPairId?: string; custom?: { civilian: string; spy: string }; participantIds: string[]; spyWordCount: number; blankCount?: number; actionId: string }
   | { t: 'charades:push'; actorId: string; word: string; durationSec?: number; actionId: string }
   | { t: 'whoami:push'; participantIds: string[]; category?: string; actionId: string }
+  | { t: 'storymix:start'; actionId: string }
+  | { t: 'storymix:submit'; who: string; where: string; what: string; actionId: string }
+  | { t: 'storymix:draw'; actionId: string }
+  | { t: 'wheel:spin'; scope?: string; actionId: string } // scope: 'all' 或 teamId
   | { t: 'lastman:start'; participantIds?: string[]; actionId: string }
   | { t: 'lastman:eliminate'; targetId: string; actionId: string }
   | { t: 'lastman:revive'; targetId: string; actionId: string }
   | { t: 'lastman:finish'; actionId: string }
   | { t: 'buzz'; actionId: string }
-  | { t: 'vote:open'; candidateIds?: string[]; actionId: string }
+  // 二选一：candidateIds 投人（默认全员）；options 投自定义选项（真真假假/最佳广告等）
+  | { t: 'vote:open'; candidateIds?: string[]; options?: string[]; question?: string; actionId: string }
   | { t: 'vote:cast'; targetId: string; actionId: string }
   | { t: 'vote:revealCount'; actionId: string }
   | { t: 'vote:revealSpy'; actionId: string }

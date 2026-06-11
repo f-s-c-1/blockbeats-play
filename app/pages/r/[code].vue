@@ -40,6 +40,7 @@ onUnmounted(() => {
   if (pulseTimer) clearTimeout(pulseTimer)
   if (noticeTimer) clearTimeout(noticeTimer)
   if (tapTimer) clearTimeout(tapTimer)
+  if (wheelTimer) clearTimeout(wheelTimer)
 })
 
 watch(joined, (j) => {
@@ -197,6 +198,47 @@ watch(() => pv.value?.secret?.task, (task, old) => {
     const nav = navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean }
     nav.vibrate?.([50, 40, 50, 40, 50])
   }
+})
+
+// —— 疯狂故事组合 ——
+const smWho = ref('')
+const smWhere = ref('')
+const smWhat = ref('')
+function submitStory() {
+  if (!smWho.value.trim() || !smWhere.value.trim() || !smWhat.value.trim()) return
+  send({ t: 'storymix:submit', who: smWho.value.trim(), where: smWhere.value.trim(), what: smWhat.value.trim() })
+  showNotice('已投稿，等待开奖')
+}
+
+// —— 点名转盘：全场按服务端下发的同一序列滚动，定格同一个人 ——
+const wheelDisplay = ref<{ id: string; name: string; avatar: string } | null>(null)
+const wheelDone = ref(false)
+let wheelTimer: ReturnType<typeof setTimeout> | undefined
+watch(() => (pv.value?.stage?.type === 'wheel' ? pv.value.stage.content.spinId : null), (spinId) => {
+  if (wheelTimer) clearTimeout(wheelTimer)
+  if (!spinId) { wheelDisplay.value = null; wheelDone.value = false; return }
+  const content = pv.value!.stage!.content
+  const order = (content.order || []) as { id: string; name: string; avatar: string }[]
+  const winner = content.winner as { id: string; name: string; avatar: string }
+  if (!order.length || !winner) return
+  wheelDone.value = false
+  let i = 0
+  let delay = 70
+  const tick = () => {
+    wheelDisplay.value = order[i % order.length]
+    i++
+    delay = Math.min(420, delay * 1.09) // 逐步减速 ~3.5s
+    if (delay >= 400) {
+      wheelDisplay.value = winner
+      wheelDone.value = true
+      const nav = navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean }
+      nav.vibrate?.(winner.id === pv.value?.me.id ? [300, 100, 300] : 80)
+      playCue()
+      return
+    }
+    wheelTimer = setTimeout(tick, delay)
+  }
+  tick()
 })
 
 function doBuzz() {
@@ -489,6 +531,44 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
         </template>
       </div>
 
+      <div v-else-if="pv.stage.type === 'storymix'" class="stage-panel stage-enter" :class="{ pulse: stagePulse }">
+        <div class="stage-kicker">疯狂故事组合 · 已收 {{ pv.stage.content.submittedCount }} 份</div>
+        <div v-if="pv.stage.content.story" class="word-card" style="margin-bottom:14px">
+          <div class="big word">{{ pv.stage.content.story.who }}<br />在{{ pv.stage.content.story.where }}<br />{{ pv.stage.content.story.what }}</div>
+        </div>
+        <template v-if="pv.stage.content.story">
+          <p class="muted" style="text-align:center">主持人可能继续抽，你也可以修改投稿。</p>
+        </template>
+        <template v-else-if="pv.stage.content.submitted">
+          <div class="huge">✅</div>
+          <h1 style="text-align:center">已投稿</h1>
+          <p class="muted" style="text-align:center">等主持人开奖；想改可以重新提交覆盖。</p>
+        </template>
+        <template v-else>
+          <h2>写一组素材，系统会随机跨人拼成爆笑句子</h2>
+        </template>
+        <div class="grid">
+          <input v-model="smWho" placeholder="人名（写个同事，如：王哥）" maxlength="20" />
+          <input v-model="smWhere" placeholder="地点（如：火山口）" maxlength="20" />
+          <input v-model="smWhat" placeholder="在做什么（如：跳广场舞）" maxlength="20" />
+          <button :disabled="!smWho.trim() || !smWhere.trim() || !smWhat.trim()" @click="submitStory">
+            {{ pv.stage.content.submitted ? '修改投稿' : '提交投稿' }}
+          </button>
+        </div>
+      </div>
+
+      <div v-else-if="pv.stage.type === 'wheel'" class="stage-panel stage-enter waiting-panel" :class="{ pulse: stagePulse }">
+        <div>
+          <div class="stage-kicker">{{ wheelDone ? '天选之子诞生！' : '命运转盘转动中…' }}</div>
+          <template v-if="wheelDisplay">
+            <div class="huge" :class="{ 'wheel-final': wheelDone }">{{ wheelDisplay.avatar }}</div>
+            <h1 style="text-align:center">{{ wheelDisplay.name }}</h1>
+            <p v-if="wheelDone && wheelDisplay.id === pv.me.id" class="big word" style="margin-top:6px">🎉 就是你！</p>
+            <p v-else-if="wheelDone" class="muted" style="text-align:center">恭喜（还是默哀？）这位天选之子</p>
+          </template>
+        </div>
+      </div>
+
       <div v-else-if="pv.stage.type === 'whoami'" class="stage-panel stage-enter" :class="{ pulse: stagePulse }">
         <template v-if="pv.stage.content.spectator">
           <div class="stage-kicker">猜猜我是谁 · 旁观全知</div>
@@ -568,7 +648,7 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
         </template>
         <template v-else>
           <div class="stage-kicker">匿名投票 · 已投 {{ pv.stage.content.votedCount }}/{{ pv.stage.content.totalVoters }}</div>
-          <h2>你觉得谁是内鬼？</h2>
+          <h2>{{ pv.stage.content.question || (pv.stage.content.isOptions ? '请投出你的一票' : '你觉得谁是内鬼？') }}</h2>
           <div class="vote-grid">
             <button v-for="c in pv.stage.content.candidates" :key="c.id" class="ghost vote-option" @click="castVote(c.id)">
               <span>{{ c.avatar }} {{ c.name }}</span>

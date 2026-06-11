@@ -204,6 +204,68 @@ describe('可见性裁剪（系统灵魂）', () => {
   })
 })
 
+describe('选项投票', () => {
+  it('投选项：候选渲染为选项文本，票箱按下标统计，进度与揭晓复用', () => {
+    const rt = createRoom('TEST')
+    const ids = joinPlayers(rt, 3)
+    const r = reduce(rt, { t: 'vote:open', options: ['第一件', '第二件', '第三件'], question: '哪件是假的？', actionId: aid() }, ADMIN)
+    expect(r.ok).toBe(true)
+    const v = buildPlayerView(rt, ids[0])
+    expect(v.stage?.content.isOptions).toBe(true)
+    expect(v.stage?.content.question).toBe('哪件是假的？')
+    expect(v.stage?.content.candidates.map((c: any) => c.name)).toEqual(['第一件', '第二件', '第三件'])
+    reduce(rt, { t: 'vote:cast', targetId: '1', actionId: aid() }, { role: 'player', playerId: ids[0] })
+    const bad = reduce(rt, { t: 'vote:cast', targetId: '9', actionId: aid() }, { role: 'player', playerId: ids[1] })
+    expect(bad.error?.code).toBe('bad_target')
+    reduce(rt, { t: 'vote:revealCount', actionId: aid() }, ADMIN)
+    expect(buildPlayerView(rt, ids[2]).stage?.content.tally['1']).toBe(1)
+  })
+
+  it('选项数量校验 2-6', () => {
+    const rt = createRoom('TEST')
+    joinPlayers(rt, 2)
+    expect(reduce(rt, { t: 'vote:open', options: ['只有一个'], actionId: aid() }, ADMIN).error?.code).toBe('bad_options')
+  })
+})
+
+describe('疯狂故事组合', () => {
+  it('投稿明细只有管理员可见；开奖跨人拼句全员可见', () => {
+    const rt = createRoom('TEST')
+    const ids = joinPlayers(rt, 3)
+    reduce(rt, { t: 'storymix:start', actionId: aid() }, ADMIN)
+    // 不足 2 份不能开奖
+    expect(reduce(rt, { t: 'storymix:draw', actionId: aid() }, ADMIN).error?.code).toBe('too_few')
+    reduce(rt, { t: 'storymix:submit', who: '小王', where: '火山口', what: '跳广场舞', actionId: aid() }, { role: 'player', playerId: ids[0] })
+    reduce(rt, { t: 'storymix:submit', who: '老板', where: '蒙古包', what: '抢烤全羊', actionId: aid() }, { role: 'player', playerId: ids[1] })
+    const v = buildPlayerView(rt, ids[2])
+    expect(v.stage?.content.submittedCount).toBe(2)
+    expect(v.stage?.content.submitted).toBe(false)
+    expect(v.stage?.content.submissions).toBeUndefined() // 投稿明细不下发
+    expect(reduce(rt, { t: 'storymix:draw', actionId: aid() }, ADMIN).ok).toBe(true)
+    const after = buildPlayerView(rt, ids[2])
+    expect(after.stage?.content.story.who).toBeTruthy()
+    expect(after.stage?.content.story.where).toBeTruthy()
+    expect(after.stage?.content.story.what).toBeTruthy()
+  })
+})
+
+describe('随机点名转盘', () => {
+  it('全员/按队抽取，赢家在序列内；范围不足 2 人拒绝', () => {
+    const rt = createRoom('TEST')
+    const ids = joinPlayers(rt, 4)
+    const r = reduce(rt, { t: 'wheel:spin', actionId: aid() }, ADMIN)
+    expect(r.ok).toBe(true)
+    const pl = rt.state.currentStage!.payload
+    expect(ids).toContain(pl.winnerId)
+    expect(pl.order.map((o: any) => o.id).sort()).toEqual([...ids].sort())
+    // 玩家视图能拿到序列与赢家（C 类公开）
+    const v = buildPlayerView(rt, ids[0])
+    expect(v.stage?.content.winner.id).toBe(pl.winnerId)
+    // 按队过滤：没有该队成员 → 拒绝
+    expect(reduce(rt, { t: 'wheel:spin', scope: 'team_nonexist', actionId: aid() }, ADMIN).error?.code).toBe('too_few')
+  })
+})
+
 describe('猜猜我是谁', () => {
   it('参赛者看到所有别人的牌、看不到自己的；旁观者全知；猜中后自己的牌翻开', () => {
     const rt = createRoom('TEST')

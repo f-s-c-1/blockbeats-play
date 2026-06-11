@@ -683,3 +683,8 @@ button.nav-pill:active { transform: none; }
 
 /* 出局成员的行内置灰 */
 .is-out { opacity: .5; text-decoration: line-through; }
+
+/* ── 点名转盘定格 ── */
+.wheel-final { animation: wheelPop .5s cubic-bezier(.34, 1.7, .64, 1) both; }
+@keyframes wheelPop { from { transform: scale(.5); } 60% { transform: scale(1.25); } to { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .wheel-final { animation: none; } }

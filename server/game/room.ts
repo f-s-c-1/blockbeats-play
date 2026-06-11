@@ -619,7 +619,21 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
       if (!Number.isFinite(ev.delta) || Math.abs(ev.delta) > 100) {
         return { ok: false, error: { code: 'bad_score', message: '分值不合法' } }
       }
-      t.score += ev.delta * (ev.multiplier || 1)
+      const applied = ev.delta * (ev.multiplier || 1)
+      t.score += applied
+      // 记分流水：可对账、可撤销（误记纠纷的"账本"）
+      s.scoreLog = [...(s.scoreLog || []), { teamId: t.id, delta: applied, ts: Date.now() }].slice(-50)
+      break
+    }
+
+    case 'score:undo': {
+      const guard = adminOnly(); if (guard) return guard
+      const log = s.scoreLog || []
+      const last = log[log.length - 1]
+      if (!last) return { ok: false, error: { code: 'empty', message: '没有可撤销的记分' } }
+      const t = findTeam(s, last.teamId)
+      if (t) t.score -= last.delta
+      s.scoreLog = log.slice(0, -1)
       break
     }
 

@@ -409,6 +409,24 @@ describe('权限', () => {
   })
 })
 
+describe('记分流水', () => {
+  it('每笔记分进流水（含翻倍后实际值）；撤销恢复分数并出账', () => {
+    const rt = createRoom('TEST')
+    joinPlayers(rt, 4)
+    reduce(rt, { t: 'draw:generate', teamCount: 2, balance: false, actionId: aid() }, ADMIN)
+    const team = rt.state.teams[0]
+    reduce(rt, { t: 'score:adjust', teamId: team.id, delta: 2, multiplier: 2, actionId: aid() }, ADMIN)
+    expect(team.score).toBe(4)
+    expect(rt.state.scoreLog).toHaveLength(1)
+    expect(rt.state.scoreLog![0]).toMatchObject({ teamId: team.id, delta: 4 })
+    reduce(rt, { t: 'score:undo', actionId: aid() }, ADMIN)
+    expect(team.score).toBe(0)
+    expect(rt.state.scoreLog).toHaveLength(0)
+    // 没有流水时撤销报错
+    expect(reduce(rt, { t: 'score:undo', actionId: aid() }, ADMIN).error?.code).toBe('empty')
+  })
+})
+
 describe('房间结束', () => {
   it('room:end 清空环节与 overlay，玩家看到结束页，新人无法加入', () => {
     const rt = createRoom('TEST')

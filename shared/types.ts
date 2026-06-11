@@ -61,6 +61,7 @@ export interface RoomState {
   members: Player[]
   teams: Team[]
   teamsRevealed: boolean // 抽签是否已揭晓；揭晓后玩家在任意环节都能看到本队成员
+  scoreLog?: { teamId: string; delta: number; ts: number }[] // 记分流水（delta 为实际生效值，含翻倍）
   passcode?: string | null
   maxPlayers: number
   uplinkOpen: boolean
@@ -101,6 +102,7 @@ export type ClientEvent =
   | { t: 'vote:revealCount'; actionId: string }
   | { t: 'vote:revealSpy'; actionId: string }
   | { t: 'score:adjust'; teamId: string; delta: number; multiplier?: 1 | 2; actionId: string }
+  | { t: 'score:undo'; actionId: string } // 撤销最近一笔记分
   | { t: 'overlay:timer'; op: 'start' | 'pause' | 'resume' | 'reset'; durationSec?: number; actionId: string }
   | { t: 'room:end'; actionId: string }
   | { t: 'overlay:announce'; text: string | null; actionId: string }

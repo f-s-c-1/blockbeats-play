@@ -440,6 +440,11 @@ function awardMemberTeam(playerId: string, points = 1) {
 
 // —— 积分 ——
 function adjust(teamId: string, delta: number, mult: 1 | 2) { send({ t: 'score:adjust', teamId, delta, multiplier: mult }) }
+function undoScore() { send({ t: 'score:undo' }) }
+// 自定义分值（大项目一次 +5 不用连点）
+const customDelta = ref(3)
+const scoreLog = computed(() => [...(room.value?.scoreLog || [])].reverse().slice(0, 10))
+const teamName = (id: string) => teams.value.find(t => t.id === id)?.name || '?'
 function awardChampion(points = 3) {
   const championId = stage.value?.payload.championId as string | undefined
   const champion = members.value.find(m => m.id === championId)
@@ -971,14 +976,26 @@ function formatTime(ts: number) {
           </button>
         </div>
         <div v-if="teams.length" class="grid">
+          <div class="section-actions">
+            <label class="num-label">自定义分值 <input v-model.number="customDelta" type="number" min="1" max="100" /></label>
+            <button class="sm ghost" :disabled="!scoreLog.length" @click="undoScore">↩ 撤销上一笔</button>
+          </div>
           <div v-for="t in sortedTeams" :key="t.id" class="score-row">
             <span>{{ t.name }} <strong>{{ t.score }}</strong></span>
             <span class="score-actions">
               <button class="sm ghost" @click="adjust(t.id, 1, 1)">+1</button>
               <button class="sm ghost" @click="adjust(t.id, 2, 1)">+2</button>
               <button class="sm" @click="adjust(t.id, 1, 2)">+1×2</button>
+              <button class="sm warning" @click="adjust(t.id, customDelta || 1, 1)">+{{ customDelta || 1 }}</button>
               <button class="sm danger" @click="adjust(t.id, -1, 1)">-1</button>
             </span>
+          </div>
+          <div v-if="scoreLog.length" class="panel">
+            <h3>记分流水（最近 {{ scoreLog.length }} 笔）</h3>
+            <div v-for="(l, i) in scoreLog" :key="i" class="score-row">
+              <span>{{ teamName(l.teamId) }} <strong :style="{ color: l.delta >= 0 ? 'var(--grass)' : 'var(--red)' }">{{ l.delta >= 0 ? '+' : '' }}{{ l.delta }}</strong></span>
+              <span class="muted">{{ formatTime(l.ts) }}</span>
+            </div>
           </div>
         </div>
         <div v-else class="empty-state">分队后可以开始记分。</div>

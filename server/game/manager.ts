@@ -39,6 +39,7 @@ function deserialize(json: string): RoomRuntime {
   const o = JSON.parse(json)
   // 旧版本数据没有 teamsRevealed 字段：默认未揭晓（宁可让主持人重点一次揭晓，也不冒险泄露）
   if (o.state && o.state.teamsRevealed === undefined) o.state.teamsRevealed = false
+  if (o.state && !o.state.scoreLog) o.state.scoreLog = []
   return {
     state: o.state,
     inbox: o.inbox || { messages: [] },

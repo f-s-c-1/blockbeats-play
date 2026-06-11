@@ -41,6 +41,7 @@ onUnmounted(() => {
   if (noticeTimer) clearTimeout(noticeTimer)
   if (tapTimer) clearTimeout(tapTimer)
   if (wheelTimer) clearTimeout(wheelTimer)
+  if (confettiTimer) clearTimeout(confettiTimer)
 })
 
 watch(joined, (j) => {
@@ -200,6 +201,40 @@ watch(() => pv.value?.secret?.task, (task, old) => {
   }
 })
 
+// —— 彩带礼花：高光时刻（揭晓/冠军/转盘定格/猜中）全屏喷彩 ——
+interface ConfettiPiece { key: number; left: number; delay: number; dur: number; color: string; size: number; spin: number }
+const confetti = ref<ConfettiPiece[]>([])
+let confettiSeq = 0
+let confettiTimer: ReturnType<typeof setTimeout> | undefined
+function fireConfetti(count = 70) {
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+  const colors = ['#ff9d2e', '#ffd23f', '#a3e635', '#38bdf8', '#f472b6', '#ef4444', '#fdf6e7']
+  confetti.value = Array.from({ length: count }, () => ({
+    key: confettiSeq++,
+    left: Math.random() * 100,
+    delay: Math.random() * 0.6,
+    dur: 2.4 + Math.random() * 1.6,
+    color: colors[Math.floor(Math.random() * colors.length)],
+    size: 7 + Math.random() * 7,
+    spin: (Math.random() < 0.5 ? -1 : 1) * (480 + Math.random() * 480),
+  }))
+  if (confettiTimer) clearTimeout(confettiTimer)
+  confettiTimer = setTimeout(() => { confetti.value = [] }, 4800)
+}
+
+// 内鬼揭晓 → 全场喷彩
+watch(() => pv.value?.stage?.type, (t, old) => {
+  if (t === 'reveal' && old !== 'reveal') fireConfetti(90)
+})
+// 吃鸡冠军诞生 → 全场喷彩（冠军本人加量）
+watch(() => (pv.value?.stage?.type === 'lastman' ? pv.value.stage.content.champion?.id : null), (id, old) => {
+  if (id && !old) fireConfetti(id === pv.value?.me.id ? 130 : 80)
+})
+// 猜猜我是谁猜中 → 本人手机喷彩
+watch(() => (pv.value?.stage?.type === 'whoami' ? pv.value.stage.content.meGuessed : false), (g, old) => {
+  if (g && !old) fireConfetti(90)
+})
+
 // —— 疯狂故事组合 ——
 const smWho = ref('')
 const smWhere = ref('')
@@ -234,6 +269,7 @@ watch(() => (pv.value?.stage?.type === 'wheel' ? pv.value.stage.content.spinId :
       const nav = navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean }
       nav.vibrate?.(winner.id === pv.value?.me.id ? [300, 100, 300] : 80)
       playCue()
+      fireConfetti(winner.id === pv.value?.me.id ? 120 : 60)
       return
     }
     wheelTimer = setTimeout(tick, delay)
@@ -323,6 +359,22 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
   </div>
 
   <div v-else class="wrap">
+    <div v-if="confetti.length" class="confetti-layer" aria-hidden="true">
+      <span
+        v-for="c in confetti"
+        :key="c.key"
+        class="confetti-piece"
+        :style="{
+          left: c.left + '%',
+          width: c.size + 'px',
+          height: c.size * 0.45 + 'px',
+          background: c.color,
+          animationDelay: c.delay + 's',
+          animationDuration: c.dur + 's',
+          '--spin': c.spin + 'deg',
+        }"
+      />
+    </div>
     <div v-if="pv?.overlays" class="overlay-bar">
       <div v-if="pv.overlays.announce" class="banner">📢 {{ pv.overlays.announce.text }}</div>
       <div v-if="pv.overlays.timer" class="banner timer-banner" :class="{ urgent: timerUrgent || timerRemain === 0 }">

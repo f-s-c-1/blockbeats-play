@@ -688,3 +688,24 @@ button.nav-pill:active { transform: none; }
 .wheel-final { animation: wheelPop .5s cubic-bezier(.34, 1.7, .64, 1) both; }
 @keyframes wheelPop { from { transform: scale(.5); } 60% { transform: scale(1.25); } to { transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) { .wheel-final { animation: none; } }
+
+/* ── 彩带礼花（高光时刻）── */
+.confetti-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  overflow: hidden;
+  pointer-events: none;
+}
+.confetti-piece {
+  position: absolute;
+  top: -5vh;
+  border-radius: 2px;
+  animation: confettiFall ease-in forwards;
+}
+@keyframes confettiFall {
+  to { transform: translateY(112vh) rotate(var(--spin, 540deg)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .confetti-layer { display: none; }
+}

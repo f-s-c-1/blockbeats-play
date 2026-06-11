@@ -440,6 +440,10 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
               <span class="em">{{ m.avatar }}</span>{{ m.name }}
             </span>
           </div>
+          <div v-if="pv.team.isCaptain" class="composer-form" style="margin-top:10px">
+            <input v-model="teamNameDraft" maxlength="12" placeholder="队长可随时改队名" @keyup.enter="submitTeamName" />
+            <button class="sm" :disabled="!teamNameDraft.trim()" @click="submitTeamName">保存</button>
+          </div>
         </div>
         <div
           v-if="pv.team"

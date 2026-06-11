@@ -176,6 +176,7 @@ const navItems = [
   { id: 'score', label: '积分' },
   { id: 'general', label: '通用' },
   { id: 'manual', label: '游戏手册' },
+  { id: 'punish', label: '惩罚' },
   { id: 'overlay', label: 'Overlay' },
   { id: 'inbox', label: '收件箱' },
 ]
@@ -1115,16 +1116,25 @@ function formatTime(ts: number) {
           <p class="muted">「{{ mbSelected.name }}：{{ mbSelected.playerText }}」</p>
         </div>
         <div v-else class="empty-state">点上面的游戏名查看玩法。</div>
-        <div class="panel">
-          <div class="section-head">
-            <h2 style="margin:0">😈 惩罚抽取</h2>
-            <div class="section-actions">
-              <button class="sm warning" @click="drawPunishment">🎲 抽一个惩罚</button>
-              <button class="sm" :disabled="!punishment" @click="pushPunishment()">推上全场大屏</button>
-            </div>
-          </div>
-          <p v-if="punishment" style="font-size:17px;font-weight:700">{{ punishment }}</p>
-          <p v-else class="muted">{{ PUNISHMENTS.length }} 条职场安全惩罚：输了的、被点名的，抽一个当场执行。</p>
+      </div>
+    </section>
+
+    <section v-show="activeTab === 'punish'" id="punish" class="card">
+      <div class="section-head">
+        <div>
+          <h2>😈 惩罚库</h2>
+          <p class="muted">{{ PUNISHMENTS.length }} 条职场安全惩罚：输了的、被点名的，抽一个当场执行；也可以从清单里手选一条推送。</p>
+        </div>
+        <div class="section-actions">
+          <button class="sm warning" @click="drawPunishment">🎲 随机抽一个</button>
+          <button class="sm" :disabled="!punishment" @click="pushPunishment()">推上全场大屏</button>
+        </div>
+      </div>
+      <div v-if="punishment" class="banner" style="margin-bottom:12px">😈 {{ punishment }}</div>
+      <div class="grid">
+        <div v-for="(x, i) in PUNISHMENTS" :key="i" class="score-row">
+          <span :style="punishment === x ? 'color:var(--gold);font-weight:800' : ''">{{ i + 1 }}. {{ x }}</span>
+          <button class="sm ghost" @click="punishment = x; pushPunishment()">推送</button>
         </div>
       </div>
     </section>

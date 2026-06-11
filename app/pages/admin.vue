@@ -2,6 +2,7 @@
 import { useRoom } from '../composables/useRoom'
 import type { AdminView } from '@shared/types'
 import { UNDERCOVER_PAIRS, CHARADES_WORDS, SPY_TASKS, WORD_CATEGORIES, CHARADES_CATEGORIES } from '@shared/words'
+import { GAME_RULES, GAME_CATEGORIES } from '@shared/games'
 
 const { connected, view, lastError, created, connect, send } = useRoom()
 const phase = ref<'setup' | 'console'>('setup')
@@ -167,6 +168,7 @@ const navItems = [
   { id: 'vote', label: '投票' },
   { id: 'score', label: '积分' },
   { id: 'general', label: '通用' },
+  { id: 'manual', label: '游戏手册' },
   { id: 'overlay', label: 'Overlay' },
   { id: 'inbox', label: '收件箱' },
 ]
@@ -439,6 +441,23 @@ const votePending = computed(() => {
 // —— 结束房间 ——
 function endRoom() {
   if (confirm('结束本场活动？所有玩家将看到结束页，且无法再加入。')) send({ t: 'room:end' })
+}
+
+// —— 游戏手册（线下游戏规则库）——
+const mbCategory = ref<string>('全部')
+const mbGames = computed(() =>
+  mbCategory.value === '全部' ? GAME_RULES : GAME_RULES.filter(x => x.category === mbCategory.value))
+const mbSelectedId = ref('')
+const mbSelected = computed(() => GAME_RULES.find(x => x.id === mbSelectedId.value) || null)
+// 切分类后选中项不在列表里则清空
+watch(mbGames, (list) => {
+  if (mbSelectedId.value && !list.some(x => x.id === mbSelectedId.value)) mbSelectedId.value = ''
+})
+function pushManualCard(withTimer = false) {
+  const game = mbSelected.value
+  if (!game) return
+  send({ t: 'stage:set', stage: { type: 'rulecard', visibility: 'C', payload: { title: game.name, text: game.playerText } } })
+  if (withTimer) send({ t: 'overlay:timer', op: 'start', durationSec: timerSec.value || 60 })
 }
 
 // —— 上行通道 ——
@@ -892,6 +911,53 @@ function formatTime(ts: number) {
         </div>
       </section>
     </div>
+
+    <section v-show="activeTab === 'manual'" id="manual" class="card">
+      <div class="section-head">
+        <div>
+          <h2>线下游戏手册</h2>
+          <p class="muted">{{ GAME_RULES.length }} 个不用写代码的游戏：选一个看带法，一键把玩家版规则推到全场手机。</p>
+        </div>
+        <span v-if="mbSelected" class="tag info">{{ mbSelected.category }}</span>
+      </div>
+      <div class="grid">
+        <div class="section-actions">
+          <button
+            v-for="c in ['全部', ...GAME_CATEGORIES]"
+            :key="c"
+            class="sm"
+            :class="{ ghost: mbCategory !== c }"
+            @click="mbCategory = c"
+          >{{ c }}</button>
+        </div>
+        <div class="list">
+          <span
+            v-for="x in mbGames"
+            :key="x.id"
+            class="member clickable"
+            :class="{ alive: mbSelectedId === x.id }"
+            @click="mbSelectedId = x.id"
+          >{{ x.name }}</span>
+        </div>
+        <div v-if="mbSelected" class="panel">
+          <div class="section-head">
+            <h2 style="margin:0">{{ mbSelected.name }}</h2>
+            <div class="section-actions">
+              <button class="sm" @click="pushManualCard(false)">推规则卡给玩家</button>
+              <button class="sm ghost" @click="pushManualCard(true)">推卡并开 {{ timerSec || 60 }}s 倒计时</button>
+            </div>
+          </div>
+          <p class="muted">👥 {{ mbSelected.players }} · 🧰 道具：{{ mbSelected.props }}</p>
+          <h3>主持人怎么带</h3>
+          <p>{{ mbSelected.how }}</p>
+          <h3>系统配套</h3>
+          <p>{{ mbSelected.combo }}</p>
+          <h3>玩家屏将显示</h3>
+          <p class="muted">「{{ mbSelected.name }}：{{ mbSelected.playerText }}」</p>
+        </div>
+        <div v-else class="empty-state">点上面的游戏名查看玩法。</div>
+      </div>
+    </section>
 
     <section v-show="activeTab === 'overlay'" id="overlay" class="card">
       <div class="section-head">

@@ -411,6 +411,24 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
       break
     }
 
+    case 'team:setCaptain': {
+      // 现任队长移交，或管理员强制改任（队长手机没电/离场的兜底）
+      const t = findTeam(s, ev.teamId)
+      if (!t) return { ok: false, error: { code: 'notfound', message: '队伍不存在' } }
+      if (actor.role !== 'admin') {
+        const p = actor.playerId ? findPlayer(s, actor.playerId) : undefined
+        if (!p || p.kicked || p.id !== t.captainId || p.teamId !== t.id) {
+          return { ok: false, error: { code: 'forbidden', message: '仅现任队长可移交' } }
+        }
+      }
+      const target = findPlayer(s, ev.playerId)
+      if (!target || target.kicked || target.teamId !== t.id) {
+        return { ok: false, error: { code: 'bad_target', message: '新队长必须是本队成员' } }
+      }
+      t.captainId = target.id
+      break
+    }
+
     case 'stage:set': {
       const guard = adminOnly(); if (guard) return guard
       // 通用入口只允许 C 类同屏环节和 draw 的 E 类揭晓；
@@ -1110,7 +1128,8 @@ export function buildPlayerView(rt: RoomRuntime, playerId: string): PlayerView {
   if (s.teamsRevealed) {
     if (me.teamId) {
       const team = findTeam(s, me.teamId)
-      const members = s.members.filter(p => p.teamId === me.teamId && !p.kicked).map(p => ({ name: p.name, avatar: p.avatar }))
+      const members = s.members.filter(p => p.teamId === me.teamId && !p.kicked)
+        .map(p => ({ id: p.id, name: p.name, avatar: p.avatar, isCaptain: team?.captainId === p.id }))
       base.team = { id: team?.id || me.teamId, name: team?.name || '我的队', isCaptain: team?.captainId === me.id, members }
     }
     if (me.secretRole === 'spy') base.secret = { isSpy: true, task: me.spyTask }

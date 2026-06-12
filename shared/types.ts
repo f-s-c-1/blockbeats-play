@@ -81,6 +81,7 @@ export type ClientEvent =
   | { t: 'spy:assign'; playerIds: string[]; tasks?: Record<string, string>; actionId: string }
   | { t: 'spy:task'; playerId: string; task: string; actionId: string } // 管理员单独给某内鬼改派秘密任务
   | { t: 'team:setName'; teamId: string; name: string; actionId: string }
+  | { t: 'team:setCaptain'; teamId: string; playerId: string; actionId: string } // 移交队长：现任队长或管理员
   | { t: 'stage:set'; stage: { type: StageType; visibility: Visibility; payload: Record<string, any> }; actionId: string }
   | { t: 'stage:clear'; actionId: string }
   | { t: 'stage:action'; kind: string; targetId?: string; actionId: string }
@@ -144,7 +145,7 @@ export interface PlayerView {
     scoreboard?: { teams: { name: string; score: number }[] } | null
   }
   uplinkOpen: boolean
-  team?: { id: string; name: string; isCaptain: boolean; members: { name: string; avatar: string }[] }
+  team?: { id: string; name: string; isCaptain: boolean; members: { id: string; name: string; avatar: string; isCaptain: boolean }[] }
   secret?: { isSpy: boolean; task?: string }
 }
 

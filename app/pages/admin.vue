@@ -303,6 +303,8 @@ function setTeamName(teamId: string) {
   const current = teams.value.find(t => t.id === teamId)?.name || ''
   openDialog('输入队名', current, name => send({ t: 'team:setName', teamId, name }), '队名（12 字内）', 12)
 }
+// 强制改任队长（队长手机没电/离场时的兜底；队长自己也能在手机上移交）
+function setCaptain(teamId: string, playerId: string) { send({ t: 'team:setCaptain', teamId, playerId }) }
 
 // —— 内鬼指定 ——
 const spySel = ref<Set<string>>(new Set())
@@ -798,6 +800,8 @@ function formatTime(ts: number) {
             <div class="team-members">
               <span v-for="m in teamMembers(t.id)" :key="m.id">
                 {{ m.avatar }}{{ m.name }}<span v-if="isSpy(m.id)" class="tag spy">鬼</span>
+                <span v-if="t.captainId === m.id" class="tag info">👑</span>
+                <button v-else class="sm ghost" title="改任为队长" @click="setCaptain(t.id, m.id)">设队长</button>
               </span>
             </div>
           </div>

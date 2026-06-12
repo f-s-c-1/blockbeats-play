@@ -494,6 +494,13 @@ function submitTeamName() {
   showNotice('队名已提交')
 }
 
+// 队长移交：把掷骰/买地/改队名的权力交给队友（交出去后对方也能再交回来）
+function transferCaptain(playerId: string, name: string) {
+  if (!pv.value?.team?.isCaptain || !pv.value.me.teamId) return
+  send({ t: 'team:setCaptain', teamId: pv.value.me.teamId, playerId })
+  showNotice(`👑 队长已移交给 ${name}`)
+}
+
 function remainSec(endsAt: number, paused: boolean, remaining: number) {
   const ms = paused ? remaining : Math.max(0, endsAt - now.value)
   return Math.ceil(ms / 1000)
@@ -607,10 +614,17 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
         <h1 style="text-align:center">等待主持人</h1>
         <p class="muted" style="text-align:center">游戏开始时，这里会自动切换到你的任务。</p>
         <div v-if="pv.team" class="panel">
-          <h2>🎴 {{ pv.team.name }}<span v-if="pv.team.isCaptain" class="tag info" style="margin-left:8px">队长</span></h2>
+          <h2>🎴 {{ pv.team.name }}<span v-if="pv.team.isCaptain" class="tag info" style="margin-left:8px">👑 你是队长</span></h2>
           <div class="list">
-            <span v-for="(m, i) in pv.team.members" :key="i" class="member">
+            <span v-for="m in pv.team.members" :key="m.id" class="member">
               <span class="em">{{ m.avatar }}</span>{{ m.name }}
+              <span v-if="m.isCaptain" class="tag info">👑</span>
+              <button
+                v-else-if="pv.team.isCaptain"
+                class="sm ghost"
+                title="把队长移交给TA"
+                @click="transferCaptain(m.id, m.name)"
+              >移交</button>
             </span>
           </div>
           <div v-if="pv.team.isCaptain" class="composer-form" style="margin-top:10px">
@@ -656,8 +670,15 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
         </div>
         <h2>队友</h2>
         <div class="list">
-          <span v-for="(m, i) in pv.team?.members" :key="i" class="member">
+          <span v-for="m in pv.team?.members" :key="m.id" class="member">
             <span class="em">{{ m.avatar }}</span>{{ m.name }}
+            <span v-if="m.isCaptain" class="tag info">👑</span>
+            <button
+              v-else-if="pv.team?.isCaptain"
+              class="sm ghost"
+              title="把队长移交给TA"
+              @click="transferCaptain(m.id, m.name)"
+            >移交</button>
           </span>
         </div>
         <div v-if="pv.team?.isCaptain" class="panel">

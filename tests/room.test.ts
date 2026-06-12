@@ -409,6 +409,36 @@ describe('权限', () => {
   })
 })
 
+describe('队长移交', () => {
+  it('队长可移交、管理员可强制改任；非队长/跨队目标被拒；新队长立刻接管大富翁掷骰权', () => {
+    const rt = createRoom('TEST')
+    joinPlayers(rt, 4)
+    reduce(rt, { t: 'draw:generate', teamCount: 2, balance: false, actionId: aid() }, ADMIN)
+    const team = rt.state.teams[0]
+    const oldCap = team.captainId!
+    const mate = rt.state.members.find(m => m.teamId === team.id && m.id !== oldCap)!
+    const outsider = rt.state.members.find(m => m.teamId !== team.id)!
+    // 非队长不能移交
+    expect(reduce(rt, { t: 'team:setCaptain', teamId: team.id, playerId: mate.id, actionId: aid() }, { role: 'player', playerId: mate.id }).error?.code).toBe('forbidden')
+    // 队长不能移交给外队的人
+    expect(reduce(rt, { t: 'team:setCaptain', teamId: team.id, playerId: outsider.id, actionId: aid() }, { role: 'player', playerId: oldCap }).error?.code).toBe('bad_target')
+    // 队长正常移交
+    expect(reduce(rt, { t: 'team:setCaptain', teamId: team.id, playerId: mate.id, actionId: aid() }, { role: 'player', playerId: oldCap }).ok).toBe(true)
+    expect(team.captainId).toBe(mate.id)
+    // 管理员强制改回
+    expect(reduce(rt, { t: 'team:setCaptain', teamId: team.id, playerId: oldCap, actionId: aid() }, ADMIN).ok).toBe(true)
+    expect(team.captainId).toBe(oldCap)
+    // 大富翁掷骰权跟着现任队长走
+    reduce(rt, { t: 'richman:start', actionId: aid() }, ADMIN)
+    const pl = rt.state.currentStage!.payload
+    const curTeamId = pl.order[pl.turnIdx] as string
+    const curTeam = rt.state.teams.find(t => t.id === curTeamId)!
+    const newCap = rt.state.members.find(m => m.teamId === curTeamId && m.id !== curTeam.captainId)!
+    reduce(rt, { t: 'team:setCaptain', teamId: curTeamId, playerId: newCap.id, actionId: aid() }, ADMIN)
+    expect(reduce(rt, { t: 'richman:roll', actionId: aid() }, { role: 'player', playerId: newCap.id }).ok).toBe(true)
+  })
+})
+
 describe('记分流水', () => {
   it('每笔记分进流水（含翻倍后实际值）；撤销恢复分数并出账', () => {
     const rt = createRoom('TEST')

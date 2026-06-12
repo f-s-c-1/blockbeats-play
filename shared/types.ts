@@ -93,7 +93,7 @@ export type ClientEvent =
   | { t: 'storymix:submit'; who: string; where: string; what: string; actionId: string }
   | { t: 'storymix:draw'; actionId: string }
   | { t: 'wheel:spin'; scope?: string; actionId: string } // scope: 'all' 或 teamId
-  | { t: 'richman:start'; actionId: string } // 开局（需已分队）
+  | { t: 'richman:start'; botCount?: number; actionId: string } // 开局（真实队伍+机器人队合计至少 2 队；机器人由服务端自动驾驶）
   | { t: 'richman:roll'; actionId: string } // 掷骰：管理员或当前回合队长
   | { t: 'richman:decide'; accept: boolean; actionId: string } // 买地/升级决定：管理员或当事队长
   | { t: 'richman:bail'; actionId: string } // 保释：当前回合队被冻结时付钱解冻（管理员或队长）

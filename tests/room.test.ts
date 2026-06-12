@@ -536,6 +536,20 @@ describe('大富翁', () => {
     expect(pl.turnIdx).toBe(1)
   })
 
+  it('机器人队：无真实队伍也能开局，机器人带 bot 标记且可由管理员代操作', () => {
+    const rt = createRoom('TEST')
+    // 0 真实队伍 + 1 机器人不够
+    expect(reduce(rt, { t: 'richman:start', botCount: 1, actionId: aid() }, ADMIN).error?.code).toBe('too_few')
+    // 0 真实队伍 + 2 机器人可开
+    expect(reduce(rt, { t: 'richman:start', botCount: 2, actionId: aid() }, ADMIN).ok).toBe(true)
+    const pl = rt.state.currentStage!.payload
+    expect(pl.order).toHaveLength(2)
+    expect(pl.teams.every((t: { bot?: boolean }) => t.bot)).toBe(true)
+    expect(pl.cash['bot_0']).toBe(20)
+    // 机器人回合由服务端以管理员身份代操作（连接层定时驱动）
+    expect(reduce(rt, { t: 'richman:roll', actionId: aid() }, ADMIN).ok).toBe(true)
+  })
+
   it('保释：被冻结时付钱解冻，没冻/没钱被拒', () => {
     const { rt, pl } = setupRichman()
     const a = pl.order[0] as string

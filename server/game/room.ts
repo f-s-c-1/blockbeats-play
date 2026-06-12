@@ -680,13 +680,27 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
     // —— 大富翁（队伍制：队伍当棋子，队长掷骰，金币独立于队伍积分）——
     case 'richman:start': {
       const guard = adminOnly(); if (guard) return guard
-      if (s.teams.length < 2) return { ok: false, error: { code: 'too_few', message: '大富翁至少需要 2 支队伍，请先分队' } }
-      const order = s.teams.map(t => t.id)
+      const botCount = Number.isInteger(ev.botCount) ? Math.min(4, Math.max(0, ev.botCount!)) : 0
+      if (s.teams.length + botCount < 2) {
+        return { ok: false, error: { code: 'too_few', message: '真实队伍+机器人合计至少 2 队（可加机器人单人测试）' } }
+      }
+      // 机器人队只存在于棋盘内：不进房间队伍、不参与活动积分，由连接层自动驾驶
+      const botTeams = Array.from({ length: botCount }, (_, i) => ({
+        id: `bot_${i}`,
+        name: `机器人${'ABCD'[i]}`,
+        token: RICH_TOKENS[(s.teams.length + i) % RICH_TOKENS.length],
+        bot: true,
+      }))
+      const allTeams = [
+        ...s.teams.map((t, i) => ({ id: t.id, name: t.name, token: RICH_TOKENS[i % RICH_TOKENS.length] })),
+        ...botTeams,
+      ]
+      const order = allTeams.map(t => t.id)
       s.currentStage = {
         type: 'richman', visibility: 'C',
         payload: {
           // 队名快照：中途改队名不回写棋盘，避免视图依赖玩家拿不到的 teams 全量
-          teams: s.teams.map((t, i) => ({ id: t.id, name: t.name, token: RICH_TOKENS[i % RICH_TOKENS.length] })),
+          teams: allTeams,
           order, turnIdx: 0, round: 1,
           cash: Object.fromEntries(order.map(id => [id, RICH_START_CASH])),
           pos: Object.fromEntries(order.map(id => [id, 0])),

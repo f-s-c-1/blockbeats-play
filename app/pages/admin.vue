@@ -428,7 +428,8 @@ function spinWheel() { send({ t: 'wheel:spin', scope: wheelScope.value }) }
 const wheelWinner = computed(() => stage.value?.type === 'wheel' ? stage.value.payload.winner : null)
 
 // —— 大富翁 ——
-function startRichman() { send({ t: 'richman:start' }) }
+const rmBots = ref(0) // 机器人队数：单人也能开局测试
+function startRichman() { send({ t: 'richman:start', botCount: rmBots.value }) }
 function rollRichman() { send({ t: 'richman:roll' }) }
 function decideRichman(accept: boolean) { send({ t: 'richman:decide', accept }) }
 function nextRichman() { send({ t: 'richman:next' }) }
@@ -997,7 +998,11 @@ function formatTime(ts: number) {
             <p class="muted">队伍当棋子，轮流掷骰买地收租；队长在手机上掷骰/决定买地，你也可随时代操作。金币独立于活动积分。</p>
           </div>
           <div class="section-actions">
-            <button class="sm" :disabled="teams.length < 2" @click="startRichman">{{ rm ? '重新开局' : '开局' }}</button>
+            <select v-model.number="rmBots" title="机器人队由系统自动掷骰买地，方便单人排练">
+              <option :value="0">不加机器人</option>
+              <option v-for="n in 4" :key="n" :value="n">{{ n }} 个机器人队</option>
+            </select>
+            <button class="sm" :disabled="teams.length + rmBots < 2" @click="startRichman">{{ rm ? '重新开局' : '开局' }}</button>
             <button class="sm danger" :disabled="!rm || rm.finished" @click="endRichman">结算</button>
           </div>
         </div>
@@ -1056,7 +1061,7 @@ function formatTime(ts: number) {
             <p v-for="(l, i) in rmLog" :key="i" class="muted" style="margin-bottom:6px">{{ l }}</p>
           </div>
         </div>
-        <div v-else class="empty-state">需要先分队（至少 2 队），然后点「开局」。建议先揭晓分组，队长才能在手机上掷骰。</div>
+        <div v-else class="empty-state">真实队伍+机器人合计至少 2 队即可「开局」。一个人测试：选 2 个机器人队直接开；正式玩建议先分队并揭晓分组，队长才能在手机上掷骰。</div>
       </section>
 
       <section v-show="activeTab === 'lastman'" id="lastman" class="card">

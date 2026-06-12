@@ -66,8 +66,8 @@ function detachPeer(code: string, peer: Peer) {
 function broadcast(code: string) {
   const rt = getRoom(code)
   const peers = roomPeers.get(code)
-  if (!rt || !peers) return
-  for (const peer of peers) {
+  if (!rt) return
+  for (const peer of peers || []) {
     const sess = sessions.get(peer.id)
     if (!sess) continue
     if (sess.role === 'admin') {
@@ -76,6 +76,54 @@ function broadcast(code: string) {
       send(peer, { t: 'room:state', ...buildPlayerView(rt, sess.playerId) })
     }
   }
+  scheduleRichmanBot(code)
+}
+
+// ── 大富翁机器人自动驾驶 ──
+// 轮到机器人队时延时行动：有待买决定就决定，被关有钱就保释，否则掷骰；
+// 每次行动后 broadcast 会再次调用本函数，连续的机器人回合自动接力。
+const botTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const BOT_ACT_MS = 3200 // 留足骰子+走格动画时间，全场看得清
+
+function richmanBotTurn(rt: NonNullable<ReturnType<typeof getRoom>>): string | null {
+  const st = rt.state.currentStage
+  if (!st || st.type !== 'richman' || st.payload.finished) return null
+  const pl = st.payload
+  const cur = (pl.pending ? pl.pending.teamId : pl.order[pl.turnIdx]) as string
+  const team = (pl.teams as { id: string; bot?: boolean }[]).find(t => t.id === cur)
+  return team?.bot ? cur : null
+}
+
+function scheduleRichmanBot(code: string) {
+  const rt = getRoom(code)
+  const cur = rt ? richmanBotTurn(rt) : null
+  if (!cur) {
+    const t = botTimers.get(code)
+    if (t) { clearTimeout(t); botTimers.delete(code) }
+    return
+  }
+  if (botTimers.has(code)) return // 已排程
+  botTimers.set(code, setTimeout(() => {
+    botTimers.delete(code)
+    const rt2 = getRoom(code)
+    if (!rt2) return
+    const bot = richmanBotTurn(rt2)
+    if (!bot) return
+    const pl = rt2.state.currentStage!.payload
+    const actionId = `bot_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+    let ev: ClientEvent
+    if (pl.pending) {
+      // 买地策略：买完还能剩 2 金币就买
+      ev = { t: 'richman:decide', accept: pl.cash[bot] - pl.pending.cost >= 2, actionId }
+    } else if (pl.frozen[bot] && pl.cash[bot] >= 4) {
+      ev = { t: 'richman:bail', actionId }
+    } else {
+      ev = { t: 'richman:roll', actionId }
+    }
+    reduce(rt2, ev, { role: 'admin' })
+    markDirty(code)
+    broadcast(code)
+  }, BOT_ACT_MS))
 }
 
 // 仅推送单个连接（加入确认时用）

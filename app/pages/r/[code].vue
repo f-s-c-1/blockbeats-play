@@ -2,7 +2,8 @@
 import { useRoom } from '../../composables/useRoom'
 import { AVATAR_POOL } from '@shared/types'
 import type { PlayerView } from '@shared/types'
-import { RICH_BOARD, RICH_COLORS, RICH_MAX_LEVEL } from '@shared/richman'
+import { RICH_BOARD, RICH_COLORS, RICH_MAX_LEVEL, RICH_ITEMS, RICH_BAIL_COST, richGroupOf, richRent } from '@shared/richman'
+import type { RichItemKind } from '@shared/richman'
 
 const route = useRoute()
 const code = (route.params.code as string).toUpperCase()
@@ -45,6 +46,8 @@ onUnmounted(() => {
   if (confettiTimer) clearTimeout(confettiTimer)
   if (rmDiceTimer) clearInterval(rmDiceTimer)
   if (rmDiceStop) clearTimeout(rmDiceStop)
+  if (rmStepTimer) clearInterval(rmStepTimer)
+  if (rmStepDelay) clearTimeout(rmStepDelay)
 })
 
 watch(joined, (j) => {
@@ -288,16 +291,19 @@ const rmMyTurn = computed(() => !!rmCurrentTeam.value && rmCurrentTeam.value ===
 const rmIsCaptain = computed(() => !!pv.value?.team?.isCaptain)
 const rmPendingMine = computed(() =>
   !!rmc.value?.pending && rmc.value.pending.teamId === pv.value?.me.teamId)
+const rmMyFrozen = computed(() => !!(rmMyTurn.value && rmc.value?.frozen?.[pv.value!.me.teamId!]))
+const rmMyItems = computed<RichItemKind[]>(() =>
+  (rmc.value?.items?.[pv.value?.me.teamId || ''] || []) as RichItemKind[])
 
 function rmTeam(teamId: string | null) {
   return (rmc.value?.teams || []).find((t: { id: string }) => t.id === teamId) || { name: '?', token: '' }
 }
+const rmMyCash = computed(() => rmc.value?.cash?.[pv.value?.me.teamId || ''] ?? 0)
+function rmItemIcon(kind: string) { return RICH_ITEMS[kind as RichItemKind]?.icon || '' }
+function rmItemName(kind: string) { return RICH_ITEMS[kind as RichItemKind]?.name || '' }
 function rmTeamColor(teamId: string) {
   const i = (rmc.value?.teams || []).findIndex((t: { id: string }) => t.id === teamId)
   return RICH_COLORS[Math.max(0, i) % RICH_COLORS.length]
-}
-function rmTokensAt(idx: number) {
-  return ((rmc.value?.teams || []) as { id: string; token: string }[]).filter(t => rmc.value.pos[t.id] === idx)
 }
 function rmOwner(idx: number): { teamId: string; level: number } | undefined {
   return rmc.value?.owners?.[idx]
@@ -319,16 +325,70 @@ function rmCellStyle(i: number) {
 
 function rmRoll() { send({ t: 'richman:roll' }) }
 function rmDecide(accept: boolean) { send({ t: 'richman:decide', accept }) }
+function rmBail() { send({ t: 'richman:bail' }) }
 
-// 骰子动画：rollId 变化时数字快速滚动 ~0.9s 再定格在服务端结果
-const rmDiceShow = ref(1)
+// —— 道具与格子点击 ——
+// none = 点格子看详情；block = 放路障模式（点目标格）
+const rmItemMode = ref<'none' | 'dice' | 'block'>('none')
+const rmSelTile = ref<number | null>(null)
+function rmUseDice(v: number) {
+  send({ t: 'richman:item', kind: 'dice', value: v })
+  rmItemMode.value = 'none'
+}
+function rmTileTap(i: number) {
+  if (rmItemMode.value === 'block') {
+    if (i === 0 || rmc.value?.blocks?.[i]) return
+    send({ t: 'richman:item', kind: 'block', tileIdx: i })
+    rmItemMode.value = 'none'
+    return
+  }
+  rmSelTile.value = rmSelTile.value === i ? null : i
+}
+// 选中格子的详情（参考 itaylayzer/Monopoly 的地产卡：点格子看价格/租金/归属）
+const rmTileInfo = computed(() => {
+  const i = rmSelTile.value
+  if (i == null || !rmc.value) return null
+  const tile = RICH_BOARD[i]
+  const own = rmOwner(i)
+  const group = richGroupOf(i)
+  const hasSet = !!own && !!group && group.tiles.every(ti => rmOwner(ti)?.teamId === own.teamId)
+  return {
+    tile, group, own, hasSet,
+    rent: tile.price ? richRent(tile.price, own?.level || 1, hasSet) : 0,
+    ownerName: own ? `${rmTeam(own.teamId).token}${rmTeam(own.teamId).name}` : '',
+    blocked: !!rmc.value.blocks?.[i],
+  }
+})
+
+// —— 全员竞猜点数 ——
+const rmMyGuess = computed(() => rmc.value?.guesses?.[pv.value?.me.id || ''] ?? null)
+function rmGuess(v: number) { send({ t: 'richman:guess', value: v }) }
+// 开骰后：本人猜中 → 庆祝
+watch(() => rmc.value?.lastGuess as { sum: number; correct: string[] } | null, (g: { sum: number; correct: string[] } | null) => {
+  if (g?.correct?.includes(pv.value?.me.id || '')) {
+    showNotice(`🔮 猜中 ${g.sum} 点！你的队 +1`)
+    fireConfetti(45)
+  }
+})
+
+// —— 骰子动画：rollId 变化时数字快速滚动 ~0.9s 再定格在服务端结果 ——
+const rmDiceShow = ref('?')
 const rmRolling = ref(false)
 let rmDiceTimer: ReturnType<typeof setInterval> | undefined
 let rmDiceStop: ReturnType<typeof setTimeout> | undefined
+const rmDiceText = computed(() => {
+  const vs = (rmc.value?.dice?.values || []) as number[]
+  if (!vs.length) return '–'
+  return vs.length === 2 ? `${vs[0]}+${vs[1]}=${vs[0] + vs[1]}` : `${vs[0]}`
+})
 // 重连/中途加入时棋盘上已有历史骰子：标记一下，避免把它当新掷重播动画
 let rmEnteredWithDice = false
 watch(() => pv.value?.stage?.type === 'richman', (on: boolean, was: boolean) => {
-  if (on && !was) rmEnteredWithDice = !!rmc.value?.dice
+  if (on && !was) {
+    rmEnteredWithDice = !!rmc.value?.dice
+    rmItemMode.value = 'none'
+    rmSelTile.value = null
+  }
 })
 watch(() => rmc.value?.dice?.rollId as string | undefined, (rollId: string | undefined) => {
   if (rmDiceTimer) clearInterval(rmDiceTimer)
@@ -337,14 +397,49 @@ watch(() => rmc.value?.dice?.rollId as string | undefined, (rollId: string | und
   if (!rollId || !dice) { rmRolling.value = false; return }
   if (rmEnteredWithDice) { rmEnteredWithDice = false; return }
   rmRolling.value = true
-  rmDiceTimer = setInterval(() => { rmDiceShow.value = Math.floor(Math.random() * 6) + 1 }, 80)
+  const twin = (dice.values as number[]).length === 2
+  rmDiceTimer = setInterval(() => {
+    const a = Math.floor(Math.random() * 6) + 1
+    const b = Math.floor(Math.random() * 6) + 1
+    rmDiceShow.value = twin ? `${a}+${b}` : `${a}`
+  }, 80)
   rmDiceStop = setTimeout(() => {
     if (rmDiceTimer) clearInterval(rmDiceTimer)
-    rmDiceShow.value = dice.value
     rmRolling.value = false
     const nav = navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean }
     nav.vibrate?.(60)
   }, 900)
+})
+
+// —— 棋子逐格移动动画（参考 javascript-monopoly 的 timed-interval 走格）——
+// rmAnimPos 是棋子的"显示位置"，落后于服务端真实位置逐格追赶
+const rmAnimPos = ref<Record<string, number>>({})
+let rmStepTimer: ReturnType<typeof setInterval> | undefined
+let rmStepDelay: ReturnType<typeof setTimeout> | undefined
+function rmTokensAt(idx: number) {
+  return ((rmc.value?.teams || []) as { id: string; token: string }[])
+    .filter(t => (rmAnimPos.value[t.id] ?? rmc.value.pos[t.id]) === idx)
+}
+watch(() => (rmc.value ? JSON.stringify(rmc.value.pos) : null), (s: string | null) => {
+  if (rmStepTimer) clearInterval(rmStepTimer)
+  if (rmStepDelay) clearTimeout(rmStepDelay)
+  if (!s) { rmAnimPos.value = {}; return }
+  const pos = JSON.parse(s) as Record<string, number>
+  const known = Object.keys(rmAnimPos.value).length > 0
+  const changed = Object.keys(pos).filter(id => rmAnimPos.value[id] !== pos[id])
+  // 首屏/重连/多队同变（重新开局）→ 直接对齐，不播动画
+  if (!known || changed.length !== 1) { rmAnimPos.value = { ...pos }; return }
+  const id = changed[0]
+  const target = pos[id]
+  const start = () => {
+    rmStepTimer = setInterval(() => {
+      const cur = rmAnimPos.value[id]
+      if (cur === target) { if (rmStepTimer) clearInterval(rmStepTimer); return }
+      rmAnimPos.value = { ...rmAnimPos.value, [id]: ((cur ?? 0) + 1) % RICH_BOARD.length }
+    }, 170)
+  }
+  // 配合骰子动画：先滚骰 ~0.9s 再起步走格
+  rmStepDelay = setTimeout(start, rmRolling.value ? 950 : 120)
 })
 
 // 结算 → 全场喷彩，冠军队成员加量
@@ -717,35 +812,80 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
         </template>
         <template v-else>
           <div class="stage-kicker">大富翁 · 第 {{ rmc.round }} 圈 · 轮到 {{ rmTeam(rmCurrentTeam).token }}{{ rmTeam(rmCurrentTeam).name }}</div>
-          <p v-if="rmc.lastEvent" class="rm-event" :class="rmc.lastEvent.tone">{{ rmc.lastEvent.text }}</p>
+          <p class="rm-event" :class="rmRolling ? '' : rmc.lastEvent?.tone">
+            {{ rmRolling ? '🎲 掷骰中…' : (rmc.lastEvent?.text || '') }}
+          </p>
+          <p v-if="rmItemMode === 'block'" class="toast">🚧 点棋盘上的格子放路障（起点不行）<button class="sm ghost" style="margin-left:8px" @click="rmItemMode = 'none'">取消</button></p>
           <div class="rm-board">
             <div
               v-for="(tile, i) in RICH_BOARD"
               :key="i"
               class="rm-tile"
-              :class="{ owned: rmOwner(i) }"
+              :class="{
+                owned: rmOwner(i),
+                selected: rmSelTile === i,
+                targetable: rmItemMode === 'block' && i !== 0 && !rmc.blocks?.[i],
+              }"
               :style="rmCellStyle(i)"
+              @click="rmTileTap(i)"
             >
+              <span v-if="richGroupOf(i)" class="rm-stripe" :style="{ background: richGroupOf(i)?.color }" />
               <span class="rm-icon">{{ tile.icon }}</span>
               <span class="rm-name">{{ tile.name }}<template v-if="tile.price"> · {{ tile.price }}</template></span>
               <span v-if="rmOwner(i) && (rmOwner(i)?.level || 0) >= RICH_MAX_LEVEL" class="rm-lv">🏨</span>
+              <span v-if="rmc.blocks?.[i]" class="rm-blockmark">🚧</span>
               <span v-if="rmTokensAt(i).length" class="rm-tokens">
                 <span v-for="t in rmTokensAt(i)" :key="t.id">{{ t.token }}</span>
               </span>
             </div>
             <div class="rm-center">
-              <div class="rm-dice" :class="{ rolling: rmRolling }">🎲 {{ rmRolling ? rmDiceShow : (rmc.dice?.value ?? '–') }}</div>
-              <p class="muted rm-turn">{{ rmMyTurn ? '轮到你们队！' : '观战中' }}</p>
+              <div class="rm-dice" :class="{ rolling: rmRolling }">🎲 {{ rmRolling ? rmDiceShow : rmDiceText }}</div>
+              <p class="muted rm-turn">{{ rmMyTurn ? '轮到你们队！' : '点格子看行情' }}</p>
             </div>
+          </div>
+          <div v-if="rmTileInfo" class="panel rm-tileinfo">
+            <strong>{{ rmTileInfo.tile.icon }}{{ rmTileInfo.tile.name }}</strong>
+            <span v-if="rmTileInfo.group" class="tag" :style="{ borderColor: rmTileInfo.group.color, color: rmTileInfo.group.color }">{{ rmTileInfo.group.name }}</span>
+            <span v-if="rmTileInfo.tile.price" class="muted">
+              价 {{ rmTileInfo.tile.price }} · 现租 {{ rmTileInfo.rent }}{{ rmTileInfo.hasSet ? '（成套×2）' : '' }}
+              · {{ rmTileInfo.own ? `归 ${rmTileInfo.ownerName}${(rmTileInfo.own.level || 0) >= RICH_MAX_LEVEL ? '（豪华店）' : ''}` : '无主' }}
+            </span>
+            <span v-else class="muted">{{ rmTileInfo.tile.type === 'jail' ? `停一回合，保释 ${RICH_BAIL_COST} 金币` : '踩到见分晓' }}</span>
+            <span v-if="rmTileInfo.blocked" class="tag warn">🚧 有路障</span>
           </div>
           <div class="list rm-cash">
             <span v-for="t in rmc.teams" :key="t.id" class="member" :style="{ borderColor: rmTeamColor(t.id) }">
               {{ t.token }}{{ t.name }}
               <strong :style="{ color: rmc.cash[t.id] < 0 ? 'var(--red)' : 'var(--gold)' }">💰{{ rmc.cash[t.id] }}</strong>
-              <span v-if="rmc.frozen[t.id]" class="tag warn">❄️冻结</span>
+              <span v-for="(it, k) in rmc.items?.[t.id] || []" :key="k" :title="rmItemName(it)">{{ rmItemIcon(it) }}</span>
+              <span v-if="rmc.frozen[t.id]" class="tag warn">🚔</span>
             </span>
           </div>
-          <button v-if="rmIsCaptain && rmMyTurn && !rmc.pending" class="full-width" @click="rmRoll">🎲 掷骰子</button>
+
+          <!-- 队长操作区 -->
+          <template v-if="rmIsCaptain && rmMyTurn && !rmc.pending">
+            <template v-if="rmMyFrozen">
+              <div class="grid" style="margin-top:10px">
+                <button class="full-width" :disabled="rmMyCash < RICH_BAIL_COST" @click="rmBail">💰 保释出狱（{{ RICH_BAIL_COST }} 金币，立刻能掷）</button>
+                <button class="ghost full-width" @click="rmRoll">😮‍💨 认栽，跳过这回合</button>
+              </div>
+            </template>
+            <template v-else-if="rmItemMode === 'dice'">
+              <p class="muted" style="text-align:center;margin-top:10px">🎮 遥控骰子：想走几步？</p>
+              <div class="rm-dicepick">
+                <button v-for="n in 6" :key="n" class="ghost" @click="rmUseDice(n)">{{ n }}</button>
+              </div>
+              <button class="ghost full-width" @click="rmItemMode = 'none'">取消</button>
+            </template>
+            <template v-else>
+              <button class="full-width" @click="rmRoll">🎲 掷骰子</button>
+              <div v-if="rmMyItems.length && rmItemMode === 'none'" class="section-actions" style="margin-top:8px;justify-content:center">
+                <button v-if="rmMyItems.includes('dice')" class="sm ghost" @click="rmItemMode = 'dice'">🎮 遥控骰子</button>
+                <button v-if="rmMyItems.includes('block')" class="sm ghost" @click="rmItemMode = 'block'">🚧 放路障</button>
+                <span v-if="rmMyItems.includes('shield')" class="tag info">🛡️ 免租卡（被收租时自动生效）</span>
+              </div>
+            </template>
+          </template>
           <div v-else-if="rmIsCaptain && rmPendingMine" class="grid" style="margin-top:10px">
             <button class="full-width" @click="rmDecide(true)">
               {{ rmc.pending.kind === 'buy' ? '买下' : '升级' }} {{ RICH_BOARD[rmc.pending.tileIdx].icon }}{{ RICH_BOARD[rmc.pending.tileIdx].name }}（{{ rmc.pending.cost }} 金币）
@@ -753,8 +893,24 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
             <button class="ghost full-width" @click="rmDecide(false)">不{{ rmc.pending.kind === 'buy' ? '买' : '升级' }}</button>
           </div>
           <p v-else-if="rmMyTurn" class="muted" style="text-align:center;margin-top:10px">
-            {{ rmc.pending ? '队长正在纠结买不买…' : '等你们队的队长掷骰子' }}
+            {{ rmc.pending ? '队长正在纠结买不买…' : (rmc.frozen?.[pv.me.teamId || ''] ? '队长在决定保不保释…' : '等你们队的队长掷骰子') }}
           </p>
+
+          <!-- 全员竞猜 -->
+          <div class="panel rm-guess-panel">
+            <h2>🔮 押点数</h2>
+            <p class="muted">开骰前押两颗骰子的和，猜中你队 +1（每队每回合最多一次）</p>
+            <div class="rm-guess">
+              <button
+                v-for="n in 11"
+                :key="n"
+                class="ghost"
+                :class="{ on: rmMyGuess === n + 1 }"
+                @click="rmGuess(n + 1)"
+              >{{ n + 1 }}</button>
+            </div>
+            <p v-if="rmMyGuess" class="muted" style="margin:6px 0 0">你押了 <strong style="color:var(--gold)">{{ rmMyGuess }}</strong>，开骰前可以改</p>
+          </div>
         </template>
       </div>
 

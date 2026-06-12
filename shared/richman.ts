@@ -1,5 +1,5 @@
 // 大富翁 · 队伍制棋盘配置（前后端共享）
-// 棋盘/卡池是静态常量，两端各自 import；动态对局状态全部在 stage payload 里由服务端权威维护
+// 棋盘/卡池/道具是静态常量，两端各自 import；动态对局状态全部在 stage payload 里由服务端权威维护
 
 export type RichTileType = 'start' | 'prop' | 'chance' | 'gift' | 'tax' | 'punish' | 'jail'
 
@@ -30,15 +30,40 @@ export const RICH_BOARD: RichTile[] = [
   { type: 'prop', name: '游乐场', icon: '🎡', price: 12 },
 ]
 
+// 同色成套：集齐一组两块地，组内过路费翻倍
+export interface RichGroup { name: string; color: string; tiles: number[] }
+export const RICH_GROUPS: RichGroup[] = [
+  { name: '小吃街', color: '#f472b6', tiles: [1, 3] },
+  { name: '不夜城', color: '#a3e635', tiles: [5, 7] },
+  { name: '欢唱里', color: '#38bdf8', tiles: [9, 11] },
+  { name: '游乐园', color: '#ffd23f', tiles: [13, 15] },
+]
+export function richGroupOf(tileIdx: number): RichGroup | undefined {
+  return RICH_GROUPS.find(x => x.tiles.includes(tileIdx))
+}
+
 export const RICH_START_CASH = 20 // 开局每队金币
 export const RICH_PASS_BONUS = 2  // 经过/落地起点奖励
 export const RICH_GIFT_BONUS = 3  // 宝箱格
 export const RICH_TAX = 3         // 缴税格
 export const RICH_MAX_LEVEL = 2   // 地产最高 2 级（豪华店）
+export const RICH_BAIL_COST = 2   // 拘留所保释费
+export const RICH_GUESS_BONUS = 1 // 猜中骰子点数的队伍奖励（每队每回合最多一次）
+export const RICH_MAX_ITEMS = 2   // 每队道具上限，超出折现
+export const RICH_DOUBLE_JAIL = 3 // 连掷 N 次对子直接进拘留所
 
-// 过路费：1 级半价取整，2 级全价
-export function richRent(price: number, level: number): number {
-  return level >= RICH_MAX_LEVEL ? price : Math.ceil(price / 2)
+// 过路费：1 级半价取整、2 级全价；同组成套再翻倍
+export function richRent(price: number, level: number, hasSet = false): number {
+  const base = level >= RICH_MAX_LEVEL ? price : Math.ceil(price / 2)
+  return hasSet ? base * 2 : base
+}
+
+// 道具（大宇式互坑三件套）
+export type RichItemKind = 'dice' | 'block' | 'shield'
+export const RICH_ITEMS: Record<RichItemKind, { name: string; icon: string; desc: string }> = {
+  dice: { name: '遥控骰子', icon: '🎮', desc: '本回合不掷骰，直接选 1-6 点走' },
+  block: { name: '路障', icon: '🚧', desc: '放在任意格（起点除外），撞上的队伍当场停下' },
+  shield: { name: '免租卡', icon: '🛡️', desc: '下次要付过路费时自动免单' },
 }
 
 // 队伍棋子（按分队顺序分配，与队伍卡顶色条一一对应）
@@ -48,7 +73,7 @@ export const RICH_COLORS = ['#ff9d2e', '#a3e635', '#ffd23f', '#38bdf8', '#f472b6
 export interface RichChance {
   text: string
   cash?: number // 直接加减金币
-  kind?: 'collect1' | 'pay1' | 'freeze' | 'perProp' | 'taxProp'
+  kind?: 'collect1' | 'pay1' | 'freeze' | 'perProp' | 'taxProp' | 'item_dice' | 'item_block' | 'item_shield'
 }
 
 export const RICH_CHANCES: RichChance[] = [
@@ -62,4 +87,7 @@ export const RICH_CHANCES: RichChance[] = [
   { text: '被草原寒风冻住！下回合跳过', kind: 'freeze' },
   { text: '地产大丰收：每拥有 1 处地产领 2 金币', kind: 'perProp' },
   { text: '税务稽查：每拥有 1 处地产缴 1 金币', kind: 'taxProp' },
+  { text: '路边捡到 🎮 遥控骰子！', kind: 'item_dice' },
+  { text: '工地顺来一个 🚧 路障！', kind: 'item_block' },
+  { text: '物业送你 🛡️ 免租卡！', kind: 'item_shield' },
 ]

@@ -4,7 +4,8 @@ import type { AdminView } from '@shared/types'
 import { UNDERCOVER_PAIRS, CHARADES_WORDS, SPY_TASKS, WORD_CATEGORIES, CHARADES_CATEGORIES } from '@shared/words'
 import { EMOJI_QUIZ, EMOJI_QUIZ_CATEGORIES } from '@shared/words'
 import { GAME_RULES, GAME_CATEGORIES, PUNISHMENTS } from '@shared/games'
-import { RICH_BOARD, RICH_MAX_LEVEL, richRent } from '@shared/richman'
+import { RICH_BOARD, RICH_MAX_LEVEL, RICH_BAIL_COST, RICH_ITEMS, richRent, richGroupOf } from '@shared/richman'
+import type { RichItemKind } from '@shared/richman'
 
 const { connected, view, lastError, created, connect, send } = useRoom()
 const phase = ref<'setup' | 'console'>('setup')
@@ -432,15 +433,32 @@ function nextRichman() { send({ t: 'richman:next' }) }
 function endRichman() {
   if (confirm('结算本局大富翁？金币+地产折算总资产排名，不可继续掷骰。')) send({ t: 'richman:end' })
 }
+function bailRichman() { send({ t: 'richman:bail' }) }
 const rm = computed(() => stage.value?.type === 'richman' ? stage.value.payload : null)
 const rmTeamName = (id: string) => rm.value?.teams.find((t: { id: string }) => t.id === id)?.name || '?'
 const rmToken = (id: string) => rm.value?.teams.find((t: { id: string }) => t.id === id)?.token || ''
 const rmCurrent = computed(() => rm.value && !rm.value.finished ? rm.value.order[rm.value.turnIdx] : null)
-// 地产格清单（带所有权），管理端棋盘总览用
+const rmItemIcon = (kind: string) => RICH_ITEMS[kind as RichItemKind]?.icon || ''
+const rmItemName = (kind: string) => RICH_ITEMS[kind as RichItemKind]?.name || ''
+const rmDiceText = computed(() => {
+  const vs = (rm.value?.dice?.values || []) as number[]
+  if (!vs.length) return ''
+  return vs.length === 2 ? `${vs[0]}+${vs[1]}=${vs[0] + vs[1]}` : `${vs[0]}`
+})
+const rmLog = computed<string[]>(() => [...(rm.value?.log || [])].reverse())
+const rmBlockNames = computed(() =>
+  Object.keys(rm.value?.blocks || {}).map(i => `${RICH_BOARD[Number(i)]?.icon}${RICH_BOARD[Number(i)]?.name}`).join('、'))
+// 地产格清单（带所有权 + 成套标记），管理端棋盘总览用
 const rmProps = computed(() => {
   if (!rm.value) return []
   return RICH_BOARD
-    .map((tile, idx) => ({ tile, idx, owner: rm.value.owners[idx] as { teamId: string; level: number } | undefined }))
+    .map((tile, idx) => {
+      const owner = rm.value.owners[idx] as { teamId: string; level: number } | undefined
+      const group = richGroupOf(idx)
+      const hasSet = !!owner && !!group
+        && group.tiles.every(ti => (rm.value.owners[ti] as { teamId: string } | undefined)?.teamId === owner.teamId)
+      return { tile, idx, owner, group, hasSet }
+    })
     .filter(x => x.tile.type === 'prop')
 })
 // 结算后给冠军队加活动积分（走现有记分流水，可撤销）
@@ -989,8 +1007,9 @@ function formatTime(ts: number) {
           <template v-else>
             <p class="toast">{{ rm.lastEvent?.text }}</p>
             <div class="section-actions">
-              <span class="tag info">第 {{ rm.round }} 圈 · 轮到 {{ rmToken(rmCurrent) }}{{ rmTeamName(rmCurrent) }}</span>
+              <span class="tag info">第 {{ rm.round }} 圈 · 轮到 {{ rmToken(rmCurrent) }}{{ rmTeamName(rmCurrent) }}<template v-if="rmDiceText"> · 🎲 {{ rmDiceText }}</template></span>
               <button class="sm" :disabled="!!rm.pending" @click="rollRichman">🎲 代掷骰子</button>
+              <button v-if="rm.frozen[rmCurrent]" class="sm warning" :disabled="rm.cash[rmCurrent] < RICH_BAIL_COST" @click="bailRichman">💰 代保释（{{ RICH_BAIL_COST }} 金币）</button>
               <template v-if="rm.pending">
                 <button class="sm warning" @click="decideRichman(true)">
                   代买 {{ RICH_BOARD[rm.pending.tileIdx].name }}（{{ rm.pending.cost }} 金币）
@@ -1004,22 +1023,32 @@ function formatTime(ts: number) {
             <span>
               {{ t.token }}{{ t.name }}
               <span v-if="rmCurrent === t.id" class="tag live">行动中</span>
-              <span v-if="rm.frozen[t.id]" class="tag warn">冻结</span>
+              <span v-if="rm.frozen[t.id]" class="tag warn">🚔 关押中</span>
+              <span v-for="(it, k) in rm.items?.[t.id] || []" :key="k" :title="rmItemName(it)">{{ rmItemIcon(it) }}</span>
             </span>
             <span>
               <strong :style="{ color: rm.cash[t.id] < 0 ? 'var(--red)' : 'var(--gold)' }">💰 {{ rm.cash[t.id] }}</strong>
               <span class="muted"> · 在 {{ RICH_BOARD[rm.pos[t.id]].icon }}{{ RICH_BOARD[rm.pos[t.id]].name }}</span>
             </span>
           </div>
+          <p v-if="rmBlockNames" class="muted">🚧 路障埋在：{{ rmBlockNames }}</p>
           <div class="panel">
-            <h3>地产总览（过路费：1 级半价 / 2 级全价）</h3>
+            <h3>地产总览（1 级半价租 / 2 级全价 / 同色成套再翻倍）</h3>
             <div v-for="x in rmProps" :key="x.idx" class="score-row">
-              <span>{{ x.tile.icon }}{{ x.tile.name }} <span class="muted">价 {{ x.tile.price }} · 租 {{ richRent(x.tile.price || 0, x.owner?.level || 1) }}</span></span>
+              <span>
+                <span v-if="x.group" class="rm-groupdot" :style="{ background: x.group.color }" />
+                {{ x.tile.icon }}{{ x.tile.name }}
+                <span class="muted">价 {{ x.tile.price }} · 租 {{ richRent(x.tile.price || 0, x.owner?.level || 1, x.hasSet) }}</span>
+              </span>
               <span v-if="x.owner" class="tag info">
-                {{ rmToken(x.owner.teamId) }}{{ rmTeamName(x.owner.teamId) }}{{ x.owner.level >= RICH_MAX_LEVEL ? ' · 豪华店' : '' }}
+                {{ rmToken(x.owner.teamId) }}{{ rmTeamName(x.owner.teamId) }}{{ x.owner.level >= RICH_MAX_LEVEL ? ' · 豪华店' : '' }}{{ x.hasSet ? ' · 🔗成套' : '' }}
               </span>
               <span v-else class="muted">无主</span>
             </div>
+          </div>
+          <div v-if="rmLog.length" class="panel">
+            <h3>事件回放（最近 {{ rmLog.length }} 条）</h3>
+            <p v-for="(l, i) in rmLog" :key="i" class="muted" style="margin-bottom:6px">{{ l }}</p>
           </div>
         </div>
         <div v-else class="empty-state">需要先分队（至少 2 队），然后点「开局」。建议先揭晓分组，队长才能在手机上掷骰。</div>

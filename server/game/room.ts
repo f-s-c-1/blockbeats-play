@@ -10,7 +10,8 @@ import { UNDERCOVER_PAIRS, CHARADES_WORDS, CHARADES_CATEGORIES } from '../../sha
 import { PUNISHMENTS } from '../../shared/games'
 import {
   RICH_BOARD, RICH_CHANCES, RICH_TOKENS, RICH_START_CASH, RICH_PASS_BONUS,
-  RICH_GIFT_BONUS, RICH_TAX, RICH_MAX_LEVEL, richRent,
+  RICH_GIFT_BONUS, RICH_TAX, RICH_MAX_LEVEL, RICH_BAIL_COST, RICH_GUESS_BONUS,
+  RICH_MAX_ITEMS, RICH_DOUBLE_JAIL, richRent, richGroupOf,
 } from '../../shared/richman'
 
 const MAX_INBOX_MESSAGES = 200
@@ -100,11 +101,143 @@ function findTeam(s: RoomState, id: string): Team | undefined {
 }
 
 // ───────── 大富翁辅助 ─────────
-// 回合推进：清掉待决定，轮到下一队；转完一圈 round+1
+// 事件统一出口：更新横幅 + 追加到事件日志（管理端可回看）
+function richEvent(pl: Record<string, any>, text: string, tone: 'good' | 'bad' | 'punish' = 'good') {
+  pl.lastEvent = { text, tone }
+  pl.log = [...(pl.log || []), text].slice(-8)
+}
+
+// 回合推进：清掉待决定；掷出对子的队再行动一次（bonus），否则轮到下一队
 function richAdvance(pl: Record<string, any>) {
   pl.pending = null
+  if (pl.bonus) { pl.bonus = false; return }
+  pl.streak = 0
   pl.turnIdx = (pl.turnIdx + 1) % pl.order.length
   if (pl.turnIdx === 0) pl.round++
+}
+
+// 全员竞猜结算：猜中点数和的玩家所在队 +1（每队每回合最多一次）；猜中名单回传给本人庆祝
+function richScoreGuesses(s: RoomState, pl: Record<string, any>, sum: number, notes: string[]) {
+  const guesses = (pl.guesses || {}) as Record<string, number>
+  const correct: string[] = []
+  const winners = new Set<string>()
+  for (const [pid, g] of Object.entries(guesses)) {
+    if (g !== sum) continue
+    const p = findPlayer(s, pid)
+    if (!p || p.kicked || !p.teamId || !(pl.order as string[]).includes(p.teamId)) continue
+    correct.push(pid)
+    winners.add(p.teamId)
+  }
+  for (const tid of winners) pl.cash[tid] += RICH_GUESS_BONUS
+  pl.lastGuess = { sum, correct }
+  pl.guesses = {}
+  if (winners.size) {
+    notes.push(`🔮 ${[...winners].map(id => richTeam(pl, id).name).join('、')} 猜中点数 +${RICH_GUESS_BONUS}`)
+  }
+}
+
+// 走格子（途中撞路障急停）并结算落点效果；advance=false 表示停下等队长买地决定
+function richResolveMove(s: RoomState, pl: Record<string, any>, cur: string, steps: number, notes: string[]): { advance: boolean; tone: 'good' | 'bad' | 'punish' } {
+  const from = pl.pos[cur] as number
+  let walked = steps
+  for (let i = 1; i <= steps; i++) {
+    const t = (from + i) % RICH_BOARD.length
+    if (pl.blocks[t]) { walked = i; delete pl.blocks[t]; notes.push('🚧 撞上路障，当场急刹'); break }
+  }
+  const to = (from + walked) % RICH_BOARD.length
+  pl.pos[cur] = to
+  if (from + walked >= RICH_BOARD.length && to !== 0) {
+    pl.cash[cur] += RICH_PASS_BONUS
+    notes.push(`经过起点 +${RICH_PASS_BONUS}`)
+  }
+  const tile = RICH_BOARD[to]
+  let tone: 'good' | 'bad' | 'punish' = 'good'
+  let advance = true
+  switch (tile.type) {
+    case 'start':
+      pl.cash[cur] += RICH_PASS_BONUS * 2
+      notes.push(`🚩 稳稳踩中起点，领双倍 +${RICH_PASS_BONUS * 2}`)
+      break
+    case 'gift':
+      pl.cash[cur] += RICH_GIFT_BONUS
+      notes.push(`🎁 打开篝火宝箱 +${RICH_GIFT_BONUS}`)
+      break
+    case 'tax':
+      pl.cash[cur] -= RICH_TAX
+      tone = 'bad'
+      notes.push(`💸 缴税 -${RICH_TAX}`)
+      break
+    case 'jail':
+      pl.frozen[cur] = true
+      pl.bonus = false // 对子奖励也救不了进局子
+      tone = 'bad'
+      notes.push(`🚔 进拘留所！下次轮到时可花 ${RICH_BAIL_COST} 金币保释，或认栽跳过一回合`)
+      break
+    case 'punish':
+      tone = 'punish'
+      notes.push(`😈 踩中惩罚格：${pick(PUNISHMENTS)}`)
+      break
+    case 'chance': {
+      const card = pick(RICH_CHANCES)
+      const others = (pl.order as string[]).filter(id => id !== cur)
+      const myProps = Object.values(pl.owners as Record<string, { teamId: string }>).filter(o => o.teamId === cur).length
+      notes.push(`❓ 机会卡：${card.text}`)
+      if (card.cash) pl.cash[cur] += card.cash
+      else if (card.kind === 'collect1') { for (const o of others) pl.cash[o] -= 1; pl.cash[cur] += others.length }
+      else if (card.kind === 'pay1') { for (const o of others) pl.cash[o] += 1; pl.cash[cur] -= others.length }
+      else if (card.kind === 'freeze') { pl.frozen[cur] = true; pl.bonus = false }
+      else if (card.kind === 'perProp') pl.cash[cur] += myProps * 2
+      else if (card.kind === 'taxProp') pl.cash[cur] -= myProps
+      else if (card.kind?.startsWith('item_')) {
+        const kind = card.kind.slice(5)
+        const bag = (pl.items[cur] ||= []) as string[]
+        if (bag.length >= RICH_MAX_ITEMS) { pl.cash[cur] += 2; notes.push('道具袋满了，折现 +2') }
+        else bag.push(kind)
+      }
+      if ((card.cash ?? 0) < 0 || card.kind === 'pay1' || card.kind === 'freeze' || card.kind === 'taxProp') tone = 'bad'
+      break
+    }
+    case 'prop': {
+      const own = pl.owners[to] as { teamId: string; level: number } | undefined
+      const price = tile.price!
+      if (!own) {
+        if (pl.cash[cur] >= price) {
+          pl.pending = { tileIdx: to, teamId: cur, kind: 'buy', cost: price }
+          advance = false
+          notes.push(`${tile.icon}${tile.name} 无主，${price} 金币可买，队长决定`)
+        } else {
+          notes.push(`${tile.icon}${tile.name} 无主，可惜金币不够（需 ${price}）`)
+        }
+      } else if (own.teamId === cur) {
+        if (own.level < RICH_MAX_LEVEL && pl.cash[cur] >= price) {
+          pl.pending = { tileIdx: to, teamId: cur, kind: 'upgrade', cost: price }
+          advance = false
+          notes.push(`回到自家${tile.name}，花 ${price} 可升级豪华店（过路费翻倍），队长决定`)
+        } else {
+          notes.push(`回到自家${tile.name}，歇脚`)
+        }
+      } else {
+        const owner = richTeam(pl, own.teamId)
+        const group = richGroupOf(to)
+        const hasSet = !!group && group.tiles.every(ti => (pl.owners[ti] as { teamId: string } | undefined)?.teamId === own.teamId)
+        const rent = richRent(price, own.level, hasSet)
+        const where = `${tile.icon}${tile.name} 是 ${owner.token}${owner.name} 的${hasSet ? '🔗成套' : ''}${own.level >= RICH_MAX_LEVEL ? '豪华店' : '地盘'}`
+        const bag = (pl.items[cur] || []) as string[]
+        const sIdx = bag.indexOf('shield')
+        if (sIdx >= 0) {
+          bag.splice(sIdx, 1)
+          notes.push(`${where}，🛡️ 免租卡生效，免单！`)
+        } else {
+          pl.cash[cur] -= rent
+          pl.cash[own.teamId] += rent
+          tone = 'bad'
+          notes.push(`${where}，付过路费 ${rent}`)
+        }
+      }
+      break
+    }
+  }
+  return { advance, tone }
 }
 
 // 棋盘内队伍快照（开局定格，不随改名变化）
@@ -518,14 +651,22 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
           pos: Object.fromEntries(order.map(id => [id, 0])),
           owners: {} as Record<string, { teamId: string; level: number }>,
           frozen: {} as Record<string, boolean>,
+          items: {} as Record<string, string[]>, // 每队道具袋
+          blocks: {} as Record<string, boolean>, // 棋盘上的路障
+          guesses: {} as Record<string, number>, // 本回合全员竞猜（playerId → 点数和）
+          lastGuess: null, // 上次开骰的竞猜结果 { sum, correct: playerId[] }
+          streak: 0, // 当前队连续对子次数
+          bonus: false, // 对子奖励：本队再行动一次
           dice: null,
           pending: null,
-          lastEvent: { text: `🎲 大富翁开局！每队 ${RICH_START_CASH} 金币，从起点出发`, tone: 'good' },
+          lastEvent: null,
+          log: [],
           finished: false,
           ranking: null,
         },
         startedAt: Date.now(),
       }
+      richEvent(s.currentStage.payload, `🎲 大富翁开局！每队 ${RICH_START_CASH} 金币，从起点出发。掷骰前全员可猜点数，猜中给本队 +${RICH_GUESS_BONUS}`)
       s.phase = 'running'
       break
     }
@@ -544,93 +685,106 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
       if (pl.frozen[cur]) {
         delete pl.frozen[cur]
         pl.dice = null
-        pl.lastEvent = { text: `❄️ ${label} 被冻结，本回合跳过`, tone: 'bad' }
+        pl.bonus = false
+        richEvent(pl, `❄️ ${label} 蹲完拘留所，本回合跳过`, 'bad')
         richAdvance(pl)
         break
       }
-      const v = randomBytes(4).readUInt32BE(0) % 6 + 1
-      pl.dice = { value: v, rollId: uid('roll') }
-      const from = pl.pos[cur] as number
-      const to = (from + v) % RICH_BOARD.length
-      pl.pos[cur] = to
-      const notes = [`${label} 掷出 ${v} 点`]
-      if (from + v >= RICH_BOARD.length && to !== 0) {
-        pl.cash[cur] += RICH_PASS_BONUS
-        notes.push(`经过起点 +${RICH_PASS_BONUS}`)
-      }
-      const tile = RICH_BOARD[to]
-      let tone: 'good' | 'bad' | 'punish' = 'good'
-      let advance = true
-      switch (tile.type) {
-        case 'start':
-          pl.cash[cur] += RICH_PASS_BONUS * 2
-          notes.push(`🚩 稳稳踩中起点，领双倍 +${RICH_PASS_BONUS * 2}`)
-          break
-        case 'gift':
-          pl.cash[cur] += RICH_GIFT_BONUS
-          notes.push(`🎁 打开篝火宝箱 +${RICH_GIFT_BONUS}`)
-          break
-        case 'tax':
-          pl.cash[cur] -= RICH_TAX
-          tone = 'bad'
-          notes.push(`💸 缴税 -${RICH_TAX}`)
-          break
-        case 'jail':
+      const v1 = randomBytes(4).readUInt32BE(0) % 6 + 1
+      const v2 = randomBytes(4).readUInt32BE(0) % 6 + 1
+      const sum = v1 + v2
+      const doubles = v1 === v2
+      pl.dice = { values: [v1, v2], rollId: uid('roll') }
+      const notes = [`${label} 掷出 ${v1}+${v2}=${sum}${doubles ? '，对子！' : ''}`]
+      richScoreGuesses(s, pl, sum, notes)
+      if (doubles) {
+        pl.streak = (pl.streak || 0) + 1
+        if (pl.streak >= RICH_DOUBLE_JAIL) {
           pl.frozen[cur] = true
-          tone = 'bad'
-          notes.push('🚔 进拘留所，下回合跳过')
-          break
-        case 'punish': {
-          tone = 'punish'
-          notes.push(`😈 踩中惩罚格：${pick(PUNISHMENTS)}`)
-          break
-        }
-        case 'chance': {
-          const card = pick(RICH_CHANCES)
-          const others = (pl.order as string[]).filter(id => id !== cur)
-          const myProps = Object.values(pl.owners as Record<string, { teamId: string }>).filter(o => o.teamId === cur).length
-          if (card.cash) pl.cash[cur] += card.cash
-          else if (card.kind === 'collect1') { for (const o of others) pl.cash[o] -= 1; pl.cash[cur] += others.length }
-          else if (card.kind === 'pay1') { for (const o of others) pl.cash[o] += 1; pl.cash[cur] -= others.length }
-          else if (card.kind === 'freeze') pl.frozen[cur] = true
-          else if (card.kind === 'perProp') pl.cash[cur] += myProps * 2
-          else if (card.kind === 'taxProp') pl.cash[cur] -= myProps
-          if ((card.cash ?? 0) < 0 || card.kind === 'pay1' || card.kind === 'freeze' || card.kind === 'taxProp') tone = 'bad'
-          notes.push(`❓ 机会卡：${card.text}`)
+          pl.bonus = false
+          pl.streak = 0
+          notes.push('🚔 连掷三对开太快，被抓进拘留所！')
+          richEvent(pl, notes.join('，'), 'bad')
+          richAdvance(pl)
           break
         }
-        case 'prop': {
-          const own = pl.owners[to] as { teamId: string; level: number } | undefined
-          const price = tile.price!
-          if (!own) {
-            if (pl.cash[cur] >= price) {
-              pl.pending = { tileIdx: to, teamId: cur, kind: 'buy', cost: price }
-              advance = false
-              notes.push(`${tile.icon}${tile.name} 无主，${price} 金币可买，队长决定`)
-            } else {
-              notes.push(`${tile.icon}${tile.name} 无主，可惜金币不够（需 ${price}）`)
-            }
-          } else if (own.teamId === cur) {
-            if (own.level < RICH_MAX_LEVEL && pl.cash[cur] >= price) {
-              pl.pending = { tileIdx: to, teamId: cur, kind: 'upgrade', cost: price }
-              advance = false
-              notes.push(`回到自家${tile.name}，花 ${price} 可升级豪华店（过路费翻倍），队长决定`)
-            } else {
-              notes.push(`回到自家${tile.name}，歇脚`)
-            }
-          } else {
-            const owner = richTeam(pl, own.teamId)
-            const rent = richRent(price, own.level)
-            pl.cash[cur] -= rent
-            pl.cash[own.teamId] += rent
-            tone = 'bad'
-            notes.push(`${tile.icon}${tile.name} 是 ${owner.token}${owner.name} 的${own.level >= RICH_MAX_LEVEL ? '豪华店' : '地盘'}，付过路费 ${rent}`)
-          }
-          break
-        }
+        pl.bonus = true
+        notes.push('行动完再掷一次')
       }
-      pl.lastEvent = { text: notes.join('，'), tone }
-      if (advance) richAdvance(pl)
+      const r = richResolveMove(s, pl, cur, sum, notes)
+      richEvent(pl, notes.join('，'), r.tone)
+      if (r.advance) richAdvance(pl)
+      break
+    }
+
+    case 'richman:bail': {
+      const st = s.currentStage
+      if (!st || st.type !== 'richman') return { ok: false, error: { code: 'no_stage', message: '当前不在大富翁环节' } }
+      const pl = st.payload
+      if (pl.finished) return { ok: false, error: { code: 'finished', message: '本局已结算' } }
+      const cur = pl.order[pl.turnIdx] as string
+      const err = richGuardActor(s, actor, cur)
+      if (err) return err
+      if (!pl.frozen[cur]) return { ok: false, error: { code: 'not_frozen', message: '你们队没被关着' } }
+      if (pl.cash[cur] < RICH_BAIL_COST) return { ok: false, error: { code: 'poor', message: '金币不够保释' } }
+      const team = richTeam(pl, cur)
+      pl.cash[cur] -= RICH_BAIL_COST
+      delete pl.frozen[cur]
+      richEvent(pl, `💰 ${team.token}${team.name} 花 ${RICH_BAIL_COST} 金币保释出狱，可以掷骰了`)
+      break
+    }
+
+    case 'richman:item': {
+      const st = s.currentStage
+      if (!st || st.type !== 'richman') return { ok: false, error: { code: 'no_stage', message: '当前不在大富翁环节' } }
+      const pl = st.payload
+      if (pl.finished) return { ok: false, error: { code: 'finished', message: '本局已结算' } }
+      if (pl.pending) return { ok: false, error: { code: 'pending', message: '先决定买不买' } }
+      const cur = pl.order[pl.turnIdx] as string
+      const err = richGuardActor(s, actor, cur)
+      if (err) return err
+      const team = richTeam(pl, cur)
+      const bag = (pl.items[cur] ||= []) as string[]
+      if (!bag.includes(ev.kind)) return { ok: false, error: { code: 'no_item', message: '没有这个道具' } }
+      if (ev.kind === 'dice') {
+        if (pl.frozen[cur]) return { ok: false, error: { code: 'frozen', message: '先保释或跳过，再用道具' } }
+        const v = ev.value
+        if (!Number.isInteger(v) || v! < 1 || v! > 6) return { ok: false, error: { code: 'bad_value', message: '遥控骰子只能选 1-6' } }
+        bag.splice(bag.indexOf('dice'), 1)
+        pl.dice = { values: [v], rollId: uid('roll') }
+        pl.bonus = false
+        const notes = [`🎮 ${team.token}${team.name} 用遥控骰子精准开出 ${v} 点`]
+        richScoreGuesses(s, pl, v!, notes)
+        const r = richResolveMove(s, pl, cur, v!, notes)
+        richEvent(pl, notes.join('，'), r.tone)
+        if (r.advance) richAdvance(pl)
+      } else {
+        const ti = ev.tileIdx
+        if (!Number.isInteger(ti) || ti! < 1 || ti! >= RICH_BOARD.length) {
+          return { ok: false, error: { code: 'bad_tile', message: '路障不能放在起点或棋盘外' } }
+        }
+        if (pl.blocks[ti!]) return { ok: false, error: { code: 'occupied', message: '这格已经有路障了' } }
+        bag.splice(bag.indexOf('block'), 1)
+        pl.blocks[ti!] = true
+        // 放路障不消耗回合，放完照常掷骰
+        richEvent(pl, `🚧 ${team.token}${team.name} 在${RICH_BOARD[ti!].icon}${RICH_BOARD[ti!].name} 埋了路障，等人撞`, 'bad')
+      }
+      break
+    }
+
+    case 'richman:guess': {
+      const playerId = playerOnly()
+      if (typeof playerId !== 'string') return playerId
+      const st = s.currentStage
+      if (!st || st.type !== 'richman') return { ok: false, error: { code: 'no_stage', message: '当前不在大富翁环节' } }
+      const pl = st.payload
+      if (pl.finished) return { ok: false, error: { code: 'finished', message: '本局已结算' } }
+      const p = findPlayer(s, playerId)
+      if (!p || p.kicked) return { ok: false, error: { code: 'notfound', message: '未加入' } }
+      if (!Number.isInteger(ev.value) || ev.value < 2 || ev.value > 12) {
+        return { ok: false, error: { code: 'bad_value', message: '两颗骰子的和在 2-12 之间' } }
+      }
+      pl.guesses[playerId] = ev.value // 开骰前可反复改
       break
     }
 
@@ -648,14 +802,15 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
         pl.cash[pending.teamId] -= pending.cost
         if (pending.kind === 'buy') pl.owners[pending.tileIdx] = { teamId: pending.teamId, level: 1 }
         else pl.owners[pending.tileIdx].level = RICH_MAX_LEVEL
-        pl.lastEvent = {
-          text: pending.kind === 'buy'
-            ? `🏠 ${team.token}${team.name} 买下了${tile.icon}${tile.name}！路过要交过路费`
-            : `🏨 ${team.token}${team.name} 把${tile.name}升级成豪华店！过路费翻倍`,
-          tone: 'good',
-        }
+        // 集齐同组两块地 → 成套，组内过路费翻倍
+        const group = richGroupOf(pending.tileIdx)
+        const gotSet = pending.kind === 'buy' && !!group
+          && group.tiles.every(ti => (pl.owners[ti] as { teamId: string } | undefined)?.teamId === pending.teamId)
+        richEvent(pl, pending.kind === 'buy'
+          ? `🏠 ${team.token}${team.name} 买下了${tile.icon}${tile.name}！${gotSet ? `🔗 集齐「${group!.name}」成套，过路费翻倍！` : '路过要交过路费'}`
+          : `🏨 ${team.token}${team.name} 把${tile.name}升级成豪华店！过路费翻倍`)
       } else {
-        pl.lastEvent = { text: `${team.token}${team.name} 放弃了${tile.icon}${tile.name}`, tone: 'bad' }
+        richEvent(pl, `${team.token}${team.name} 放弃了${tile.icon}${tile.name}`, 'bad')
       }
       richAdvance(pl)
       break
@@ -665,7 +820,8 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
       const guard = adminOnly(); if (guard) return guard
       const st = s.currentStage
       if (!st || st.type !== 'richman') return { ok: false, error: { code: 'no_stage', message: '当前不在大富翁环节' } }
-      st.payload.lastEvent = { text: '⏭️ 主持人推进了回合', tone: 'bad' }
+      st.payload.bonus = false // 强制推进连对子奖励一起清掉
+      richEvent(st.payload, '⏭️ 主持人推进了回合', 'bad')
       richAdvance(st.payload)
       break
     }
@@ -691,7 +847,7 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
       pl.pending = null
       pl.finished = true
       pl.ranking = ranking
-      pl.lastEvent = { text: `🏆 大富翁结束！${ranking[0].token}${ranking[0].name} 以总资产 ${ranking[0].total} 夺冠`, tone: 'good' }
+      richEvent(pl, `🏆 大富翁结束！${ranking[0].token}${ranking[0].name} 以总资产 ${ranking[0].total} 夺冠`)
       break
     }
 

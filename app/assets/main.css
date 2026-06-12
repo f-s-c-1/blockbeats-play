@@ -711,6 +711,31 @@ button.nav-pill:active { transform: none; }
   background: var(--surface-2);
 }
 .rm-tile.owned { border-width: 2.5px; background: rgba(255, 226, 178, .06); }
+.rm-tile { cursor: pointer; user-select: none; }
+.rm-tile.selected { background: rgba(255, 210, 63, .14); border-color: var(--gold); }
+/* 放路障模式：可选格子呼吸提示 */
+.rm-tile.targetable { animation: rmTarget 1s ease-in-out infinite; }
+@keyframes rmTarget {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, .0); border-color: rgba(245, 158, 11, .7); }
+  50% { box-shadow: 0 0 0 3px rgba(245, 158, 11, .25); border-color: var(--amber); }
+}
+/* 同色成套色条 */
+.rm-stripe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: 8px 8px 0 0;
+}
+.rm-blockmark {
+  position: absolute;
+  bottom: -4px;
+  left: -4px;
+  font-size: 13px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, .65));
+}
 .rm-icon { font-size: 19px; line-height: 1.15; }
 .rm-name {
   max-width: 100%;
@@ -764,7 +789,37 @@ button.nav-pill:active { transform: none; }
 .rm-event.punish { border-color: rgba(239, 68, 68, .5); background: rgba(239, 68, 68, .15); color: #fecaca; }
 .rm-cash { margin: 4px 0 10px; }
 .rm-cash .member { min-height: 38px; padding: 5px 10px; font-size: 13px; gap: 5px; }
-@media (prefers-reduced-motion: reduce) { .rm-dice.rolling { animation: none; } }
+/* 格子详情（点格子看行情） */
+.rm-tileinfo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+/* 遥控骰子选点 */
+.rm-dicepick { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 8px; }
+.rm-dicepick button { min-height: 48px; font-size: 19px; font-weight: 800; }
+/* 全员竞猜押点数 */
+.rm-guess-panel { margin-top: 14px; }
+.rm-guess { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+.rm-guess button {
+  min-height: 42px;
+  padding: 6px 0;
+  font-size: 16px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.rm-guess button.on {
+  border-color: var(--gold);
+  background: rgba(255, 210, 63, .16);
+  color: var(--gold);
+}
+/* 管理端地产分组色点 */
+.rm-groupdot { display: inline-block; width: 9px; height: 9px; margin-right: 3px; border-radius: 50%; }
+@media (prefers-reduced-motion: reduce) { .rm-dice.rolling, .rm-tile.targetable { animation: none; } }
 
 /* ── 彩带礼花（高光时刻）── */
 .confetti-layer {

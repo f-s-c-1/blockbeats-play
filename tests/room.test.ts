@@ -463,15 +463,19 @@ describe('大富翁', () => {
     expect(reduce(rt, { t: 'richman:roll', actionId: aid() }, { role: 'player', playerId: otherTeam.captainId! }).error?.code).toBe('forbidden')
     const nonCap = rt.state.members.find(m => m.teamId === cur && m.id !== curTeam.captainId)!
     expect(reduce(rt, { t: 'richman:roll', actionId: aid() }, { role: 'player', playerId: nonCap.id }).error?.code).toBe('forbidden')
-    // 管理员代掷
+    // 管理员代掷（双骰）
     expect(reduce(rt, { t: 'richman:roll', actionId: aid() }, ADMIN).ok).toBe(true)
-    expect(pl.dice.value).toBeGreaterThanOrEqual(1)
-    expect(pl.dice.value).toBeLessThanOrEqual(6)
-    expect(pl.pos[cur]).toBe(pl.dice.value % 16)
-    // 要么有待决定（回合停在原队），要么已轮到下一队
+    expect(pl.dice.values).toHaveLength(2)
+    const sum = pl.dice.values[0] + pl.dice.values[1]
+    expect(sum).toBeGreaterThanOrEqual(2)
+    expect(sum).toBeLessThanOrEqual(12)
+    expect(pl.pos[cur]).toBe(sum % 16)
+    // 有待决定或掷出对子 → 还停在原队；否则轮到下一队
     if (pl.pending) {
       expect(pl.pending.teamId).toBe(cur)
       expect(pl.turnIdx).toBe(0)
+    } else if (pl.dice.values[0] === pl.dice.values[1] && !pl.frozen[cur]) {
+      expect(pl.turnIdx).toBe(0) // 对子奖励再掷
     } else {
       expect(pl.turnIdx).toBe(1)
     }
@@ -500,6 +504,84 @@ describe('大富翁', () => {
     expect(pl.owners[1]).toMatchObject({ teamId: a, level: 1 })
     expect(pl.pending).toBeNull()
     expect(pl.turnIdx).toBe(1)
+  })
+
+  it('保释：被冻结时付钱解冻，没冻/没钱被拒', () => {
+    const { rt, pl } = setupRichman()
+    const a = pl.order[0] as string
+    expect(reduce(rt, { t: 'richman:bail', actionId: aid() }, ADMIN).error?.code).toBe('not_frozen')
+    pl.frozen[a] = true
+    pl.cash[a] = 1
+    expect(reduce(rt, { t: 'richman:bail', actionId: aid() }, ADMIN).error?.code).toBe('poor')
+    pl.cash[a] = 5
+    expect(reduce(rt, { t: 'richman:bail', actionId: aid() }, ADMIN).ok).toBe(true)
+    expect(pl.cash[a]).toBe(3)
+    expect(pl.frozen[a]).toBeUndefined()
+    expect(pl.turnIdx).toBe(0) // 保释不消耗回合，接着掷骰
+  })
+
+  it('遥控骰子：精准走指定步数；成套地产收双倍租；免租卡自动免单', () => {
+    const { rt, pl } = setupRichman()
+    const [a, b] = pl.order as string[]
+    // a 队集齐「小吃街」成套（1 号奶茶店价 4 + 3 号小卖部价 5）
+    pl.owners[1] = { teamId: a, level: 1 }
+    pl.owners[3] = { teamId: a, level: 1 }
+    pl.turnIdx = 1 // 轮到 b
+    pl.items[b] = ['dice']
+    const r = reduce(rt, { t: 'richman:item', kind: 'dice', value: 3, actionId: aid() }, ADMIN)
+    expect(r.ok).toBe(true)
+    expect(pl.pos[b]).toBe(3)
+    expect(pl.items[b]).toEqual([]) // 道具已消耗
+    // 成套租金：ceil(5/2)=3 再翻倍 = 6
+    expect(pl.cash[b]).toBe(20 - 6)
+    expect(pl.cash[a]).toBe(20 + 6)
+    expect(pl.turnIdx).toBe(0) // 回合推进回 a
+    // 免租卡：b 再次被遥控到 1 号（a 的成套地），自动免单
+    pl.turnIdx = 1
+    pl.pos[b] = 0
+    pl.items[b] = ['dice', 'shield']
+    reduce(rt, { t: 'richman:item', kind: 'dice', value: 1, actionId: aid() }, ADMIN)
+    expect(pl.cash[b]).toBe(14) // 没再扣钱
+    expect(pl.items[b]).toEqual([]) // 免租卡也消耗了
+  })
+
+  it('路障：放置消耗道具但不消耗回合；撞上急停并结算落点', () => {
+    const { rt, pl } = setupRichman()
+    const [a, b] = pl.order as string[]
+    pl.items[a] = ['block', 'dice']
+    // 不能放起点 / 已占格
+    expect(reduce(rt, { t: 'richman:item', kind: 'block', tileIdx: 0, actionId: aid() }, ADMIN).error?.code).toBe('bad_tile')
+    expect(reduce(rt, { t: 'richman:item', kind: 'block', tileIdx: 4, actionId: aid() }, ADMIN).ok).toBe(true)
+    expect(pl.blocks[4]).toBe(true)
+    expect(pl.turnIdx).toBe(0) // 没消耗回合
+    expect(reduce(rt, { t: 'richman:item', kind: 'block', tileIdx: 4, actionId: aid() }, ADMIN).error?.code).toBe('no_item')
+    // a 用遥控骰子想走 6 步，在 4 号宝箱格撞路障急停（宝箱 +3）
+    reduce(rt, { t: 'richman:item', kind: 'dice', value: 6, actionId: aid() }, ADMIN)
+    expect(pl.pos[a]).toBe(4)
+    expect(pl.blocks[4]).toBeUndefined() // 路障一次性
+    expect(pl.cash[a]).toBe(23)
+  })
+
+  it('全员竞猜：猜中点数和的队 +1，每队每回合最多一次；本人进猜中名单', () => {
+    const { rt, ids, pl } = setupRichman()
+    const [a] = pl.order as string[]
+    const bTeam = pl.order[1] as string
+    const bMembers = rt.state.members.filter(m => m.teamId === bTeam)
+    // b 队两人都猜 4，a 队一人猜 5
+    for (const m of bMembers.slice(0, 2)) {
+      expect(reduce(rt, { t: 'richman:guess', value: 4, actionId: aid() }, { role: 'player', playerId: m.id }).ok).toBe(true)
+    }
+    const aMember = rt.state.members.find(m => m.teamId === a)!
+    reduce(rt, { t: 'richman:guess', value: 5, actionId: aid() }, { role: 'player', playerId: aMember.id })
+    expect(reduce(rt, { t: 'richman:guess', value: 13, actionId: aid() }, { role: 'player', playerId: aMember.id }).error?.code).toBe('bad_value')
+    // 用遥控骰子开出 4 点（单骰道具也参与竞猜结算）
+    pl.items[a] = ['dice']
+    const before = pl.cash[bTeam]
+    reduce(rt, { t: 'richman:item', kind: 'dice', value: 4, actionId: aid() }, ADMIN)
+    expect(pl.cash[bTeam]).toBeGreaterThanOrEqual(before + 1) // 猜中 +1（落点效果只会再加不会扣 b 队）
+    expect(pl.lastGuess.sum).toBe(4)
+    expect(pl.lastGuess.correct).toHaveLength(2)
+    expect(pl.guesses).toEqual({}) // 开骰后清空
   })
 
   it('随机对局 60 步不出错：位置始终在棋盘内，金币是有限数', () => {

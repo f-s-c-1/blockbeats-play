@@ -95,6 +95,9 @@ export type ClientEvent =
   | { t: 'richman:start'; actionId: string } // 开局（需已分队）
   | { t: 'richman:roll'; actionId: string } // 掷骰：管理员或当前回合队长
   | { t: 'richman:decide'; accept: boolean; actionId: string } // 买地/升级决定：管理员或当事队长
+  | { t: 'richman:bail'; actionId: string } // 保释：当前回合队被冻结时付钱解冻（管理员或队长）
+  | { t: 'richman:item'; kind: 'dice' | 'block'; value?: number; tileIdx?: number; actionId: string } // 用道具：遥控骰子选点数 / 放路障选格子
+  | { t: 'richman:guess'; value: number; actionId: string } // 全员竞猜下一次掷骰的点数和（2-12）
   | { t: 'richman:next'; actionId: string } // 主持人强制推进回合（卡住兜底）
   | { t: 'richman:end'; actionId: string } // 结算：金币+地产折算总资产排名
   | { t: 'lastman:start'; participantIds?: string[]; actionId: string }

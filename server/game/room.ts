@@ -7,6 +7,11 @@ import type {
 } from '../../shared/types'
 import { AVATAR_POOL, TEAM_NAME_POOL } from '../../shared/types'
 import { UNDERCOVER_PAIRS, CHARADES_WORDS, CHARADES_CATEGORIES } from '../../shared/words'
+import { PUNISHMENTS } from '../../shared/games'
+import {
+  RICH_BOARD, RICH_CHANCES, RICH_TOKENS, RICH_START_CASH, RICH_PASS_BONUS,
+  RICH_GIFT_BONUS, RICH_TAX, RICH_MAX_LEVEL, richRent,
+} from '../../shared/richman'
 
 const MAX_INBOX_MESSAGES = 200
 const MAX_SEEN_ACTIONS = 5000
@@ -92,6 +97,31 @@ function findPlayer(s: RoomState, id: string): Player | undefined {
 }
 function findTeam(s: RoomState, id: string): Team | undefined {
   return s.teams.find(t => t.id === id)
+}
+
+// ───────── 大富翁辅助 ─────────
+// 回合推进：清掉待决定，轮到下一队；转完一圈 round+1
+function richAdvance(pl: Record<string, any>) {
+  pl.pending = null
+  pl.turnIdx = (pl.turnIdx + 1) % pl.order.length
+  if (pl.turnIdx === 0) pl.round++
+}
+
+// 棋盘内队伍快照（开局定格，不随改名变化）
+function richTeam(pl: Record<string, any>, teamId: string): { id: string; name: string; token: string } {
+  return (pl.teams as { id: string; name: string; token: string }[]).find(t => t.id === teamId)
+    || { id: teamId, name: '?', token: '❓' }
+}
+
+// 掷骰/买地权限：管理员随时可代操作；玩家必须是该队现任队长
+function richGuardActor(s: RoomState, actor: Actor, teamId: string): ReduceResult | null {
+  if (actor.role === 'admin') return null
+  const p = actor.playerId ? findPlayer(s, actor.playerId) : undefined
+  const team = findTeam(s, teamId)
+  if (!p || p.kicked || p.teamId !== teamId || team?.captainId !== p.id) {
+    return { ok: false, error: { code: 'forbidden', message: '只有当前回合队伍的队长可以操作' } }
+  }
+  return null
 }
 
 // ───────── 主 reducer：处理客户端事件，返回 { ok, error? } ─────────
@@ -470,6 +500,198 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
         startedAt: Date.now(),
       }
       s.phase = 'running'
+      break
+    }
+
+    // —— 大富翁（队伍制：队伍当棋子，队长掷骰，金币独立于队伍积分）——
+    case 'richman:start': {
+      const guard = adminOnly(); if (guard) return guard
+      if (s.teams.length < 2) return { ok: false, error: { code: 'too_few', message: '大富翁至少需要 2 支队伍，请先分队' } }
+      const order = s.teams.map(t => t.id)
+      s.currentStage = {
+        type: 'richman', visibility: 'C',
+        payload: {
+          // 队名快照：中途改队名不回写棋盘，避免视图依赖玩家拿不到的 teams 全量
+          teams: s.teams.map((t, i) => ({ id: t.id, name: t.name, token: RICH_TOKENS[i % RICH_TOKENS.length] })),
+          order, turnIdx: 0, round: 1,
+          cash: Object.fromEntries(order.map(id => [id, RICH_START_CASH])),
+          pos: Object.fromEntries(order.map(id => [id, 0])),
+          owners: {} as Record<string, { teamId: string; level: number }>,
+          frozen: {} as Record<string, boolean>,
+          dice: null,
+          pending: null,
+          lastEvent: { text: `🎲 大富翁开局！每队 ${RICH_START_CASH} 金币，从起点出发`, tone: 'good' },
+          finished: false,
+          ranking: null,
+        },
+        startedAt: Date.now(),
+      }
+      s.phase = 'running'
+      break
+    }
+
+    case 'richman:roll': {
+      const st = s.currentStage
+      if (!st || st.type !== 'richman') return { ok: false, error: { code: 'no_stage', message: '当前不在大富翁环节' } }
+      const pl = st.payload
+      if (pl.finished) return { ok: false, error: { code: 'finished', message: '本局已结算' } }
+      if (pl.pending) return { ok: false, error: { code: 'pending', message: '先决定买不买，再掷骰' } }
+      const cur = pl.order[pl.turnIdx] as string
+      const err = richGuardActor(s, actor, cur)
+      if (err) return err
+      const team = richTeam(pl, cur)
+      const label = `${team.token}${team.name}`
+      if (pl.frozen[cur]) {
+        delete pl.frozen[cur]
+        pl.dice = null
+        pl.lastEvent = { text: `❄️ ${label} 被冻结，本回合跳过`, tone: 'bad' }
+        richAdvance(pl)
+        break
+      }
+      const v = randomBytes(4).readUInt32BE(0) % 6 + 1
+      pl.dice = { value: v, rollId: uid('roll') }
+      const from = pl.pos[cur] as number
+      const to = (from + v) % RICH_BOARD.length
+      pl.pos[cur] = to
+      const notes = [`${label} 掷出 ${v} 点`]
+      if (from + v >= RICH_BOARD.length && to !== 0) {
+        pl.cash[cur] += RICH_PASS_BONUS
+        notes.push(`经过起点 +${RICH_PASS_BONUS}`)
+      }
+      const tile = RICH_BOARD[to]
+      let tone: 'good' | 'bad' | 'punish' = 'good'
+      let advance = true
+      switch (tile.type) {
+        case 'start':
+          pl.cash[cur] += RICH_PASS_BONUS * 2
+          notes.push(`🚩 稳稳踩中起点，领双倍 +${RICH_PASS_BONUS * 2}`)
+          break
+        case 'gift':
+          pl.cash[cur] += RICH_GIFT_BONUS
+          notes.push(`🎁 打开篝火宝箱 +${RICH_GIFT_BONUS}`)
+          break
+        case 'tax':
+          pl.cash[cur] -= RICH_TAX
+          tone = 'bad'
+          notes.push(`💸 缴税 -${RICH_TAX}`)
+          break
+        case 'jail':
+          pl.frozen[cur] = true
+          tone = 'bad'
+          notes.push('🚔 进拘留所，下回合跳过')
+          break
+        case 'punish': {
+          tone = 'punish'
+          notes.push(`😈 踩中惩罚格：${pick(PUNISHMENTS)}`)
+          break
+        }
+        case 'chance': {
+          const card = pick(RICH_CHANCES)
+          const others = (pl.order as string[]).filter(id => id !== cur)
+          const myProps = Object.values(pl.owners as Record<string, { teamId: string }>).filter(o => o.teamId === cur).length
+          if (card.cash) pl.cash[cur] += card.cash
+          else if (card.kind === 'collect1') { for (const o of others) pl.cash[o] -= 1; pl.cash[cur] += others.length }
+          else if (card.kind === 'pay1') { for (const o of others) pl.cash[o] += 1; pl.cash[cur] -= others.length }
+          else if (card.kind === 'freeze') pl.frozen[cur] = true
+          else if (card.kind === 'perProp') pl.cash[cur] += myProps * 2
+          else if (card.kind === 'taxProp') pl.cash[cur] -= myProps
+          if ((card.cash ?? 0) < 0 || card.kind === 'pay1' || card.kind === 'freeze' || card.kind === 'taxProp') tone = 'bad'
+          notes.push(`❓ 机会卡：${card.text}`)
+          break
+        }
+        case 'prop': {
+          const own = pl.owners[to] as { teamId: string; level: number } | undefined
+          const price = tile.price!
+          if (!own) {
+            if (pl.cash[cur] >= price) {
+              pl.pending = { tileIdx: to, teamId: cur, kind: 'buy', cost: price }
+              advance = false
+              notes.push(`${tile.icon}${tile.name} 无主，${price} 金币可买，队长决定`)
+            } else {
+              notes.push(`${tile.icon}${tile.name} 无主，可惜金币不够（需 ${price}）`)
+            }
+          } else if (own.teamId === cur) {
+            if (own.level < RICH_MAX_LEVEL && pl.cash[cur] >= price) {
+              pl.pending = { tileIdx: to, teamId: cur, kind: 'upgrade', cost: price }
+              advance = false
+              notes.push(`回到自家${tile.name}，花 ${price} 可升级豪华店（过路费翻倍），队长决定`)
+            } else {
+              notes.push(`回到自家${tile.name}，歇脚`)
+            }
+          } else {
+            const owner = richTeam(pl, own.teamId)
+            const rent = richRent(price, own.level)
+            pl.cash[cur] -= rent
+            pl.cash[own.teamId] += rent
+            tone = 'bad'
+            notes.push(`${tile.icon}${tile.name} 是 ${owner.token}${owner.name} 的${own.level >= RICH_MAX_LEVEL ? '豪华店' : '地盘'}，付过路费 ${rent}`)
+          }
+          break
+        }
+      }
+      pl.lastEvent = { text: notes.join('，'), tone }
+      if (advance) richAdvance(pl)
+      break
+    }
+
+    case 'richman:decide': {
+      const st = s.currentStage
+      if (!st || st.type !== 'richman') return { ok: false, error: { code: 'no_stage', message: '当前不在大富翁环节' } }
+      const pl = st.payload
+      const pending = pl.pending as { tileIdx: number; teamId: string; kind: 'buy' | 'upgrade'; cost: number } | null
+      if (!pending) return { ok: false, error: { code: 'no_pending', message: '当前没有待决定的购买' } }
+      const err = richGuardActor(s, actor, pending.teamId)
+      if (err) return err
+      const team = richTeam(pl, pending.teamId)
+      const tile = RICH_BOARD[pending.tileIdx]
+      if (ev.accept && pl.cash[pending.teamId] >= pending.cost) {
+        pl.cash[pending.teamId] -= pending.cost
+        if (pending.kind === 'buy') pl.owners[pending.tileIdx] = { teamId: pending.teamId, level: 1 }
+        else pl.owners[pending.tileIdx].level = RICH_MAX_LEVEL
+        pl.lastEvent = {
+          text: pending.kind === 'buy'
+            ? `🏠 ${team.token}${team.name} 买下了${tile.icon}${tile.name}！路过要交过路费`
+            : `🏨 ${team.token}${team.name} 把${tile.name}升级成豪华店！过路费翻倍`,
+          tone: 'good',
+        }
+      } else {
+        pl.lastEvent = { text: `${team.token}${team.name} 放弃了${tile.icon}${tile.name}`, tone: 'bad' }
+      }
+      richAdvance(pl)
+      break
+    }
+
+    case 'richman:next': {
+      const guard = adminOnly(); if (guard) return guard
+      const st = s.currentStage
+      if (!st || st.type !== 'richman') return { ok: false, error: { code: 'no_stage', message: '当前不在大富翁环节' } }
+      st.payload.lastEvent = { text: '⏭️ 主持人推进了回合', tone: 'bad' }
+      richAdvance(st.payload)
+      break
+    }
+
+    case 'richman:end': {
+      const guard = adminOnly(); if (guard) return guard
+      const st = s.currentStage
+      if (!st || st.type !== 'richman') return { ok: false, error: { code: 'no_stage', message: '当前不在大富翁环节' } }
+      const pl = st.payload
+      const assets: Record<string, number> = {}
+      for (const [idx, own] of Object.entries(pl.owners as Record<string, { teamId: string; level: number }>)) {
+        const price = RICH_BOARD[Number(idx)]?.price || 0
+        assets[own.teamId] = (assets[own.teamId] || 0) + price * own.level
+      }
+      const ranking = (pl.teams as { id: string; name: string; token: string }[])
+        .map(t => ({
+          id: t.id, name: t.name, token: t.token,
+          cash: pl.cash[t.id] ?? 0,
+          assets: assets[t.id] || 0,
+          total: (pl.cash[t.id] ?? 0) + (assets[t.id] || 0),
+        }))
+        .sort((a, b) => b.total - a.total)
+      pl.pending = null
+      pl.finished = true
+      pl.ranking = ranking
+      pl.lastEvent = { text: `🏆 大富翁结束！${ranking[0].token}${ranking[0].name} 以总资产 ${ranking[0].total} 夺冠`, tone: 'good' }
       break
     }
 

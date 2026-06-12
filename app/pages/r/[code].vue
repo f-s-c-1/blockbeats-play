@@ -2,6 +2,7 @@
 import { useRoom } from '../../composables/useRoom'
 import { AVATAR_POOL } from '@shared/types'
 import type { PlayerView } from '@shared/types'
+import { RICH_BOARD, RICH_COLORS, RICH_MAX_LEVEL } from '@shared/richman'
 
 const route = useRoute()
 const code = (route.params.code as string).toUpperCase()
@@ -42,6 +43,8 @@ onUnmounted(() => {
   if (tapTimer) clearTimeout(tapTimer)
   if (wheelTimer) clearTimeout(wheelTimer)
   if (confettiTimer) clearTimeout(confettiTimer)
+  if (rmDiceTimer) clearInterval(rmDiceTimer)
+  if (rmDiceStop) clearTimeout(rmDiceStop)
 })
 
 watch(joined, (j) => {
@@ -81,6 +84,7 @@ const stageLabels: Record<string, string> = {
   charades: '你比我猜',
   vote: '投票',
   lastman: '吃鸡淘汰赛',
+  richman: '大富翁',
   reveal: '揭晓',
   rulecard: '规则卡',
   counter: '计数挑战',
@@ -275,6 +279,80 @@ watch(() => (pv.value?.stage?.type === 'wheel' ? pv.value.stage.content.spinId :
     wheelTimer = setTimeout(tick, delay)
   }
   tick()
+})
+
+// —— 大富翁 ——
+const rmc = computed(() => (pv.value?.stage?.type === 'richman' ? pv.value.stage.content : null))
+const rmCurrentTeam = computed(() => (rmc.value && !rmc.value.finished ? rmc.value.order[rmc.value.turnIdx] : null))
+const rmMyTurn = computed(() => !!rmCurrentTeam.value && rmCurrentTeam.value === pv.value?.me.teamId)
+const rmIsCaptain = computed(() => !!pv.value?.team?.isCaptain)
+const rmPendingMine = computed(() =>
+  !!rmc.value?.pending && rmc.value.pending.teamId === pv.value?.me.teamId)
+
+function rmTeam(teamId: string | null) {
+  return (rmc.value?.teams || []).find((t: { id: string }) => t.id === teamId) || { name: '?', token: '' }
+}
+function rmTeamColor(teamId: string) {
+  const i = (rmc.value?.teams || []).findIndex((t: { id: string }) => t.id === teamId)
+  return RICH_COLORS[Math.max(0, i) % RICH_COLORS.length]
+}
+function rmTokensAt(idx: number) {
+  return ((rmc.value?.teams || []) as { id: string; token: string }[]).filter(t => rmc.value.pos[t.id] === idx)
+}
+function rmOwner(idx: number): { teamId: string; level: number } | undefined {
+  return rmc.value?.owners?.[idx]
+}
+// 16 格映射到 5×5 外圈：上 5 → 右 3 → 下 5（右往左）→ 左 3（下往上）
+function rmCellStyle(i: number) {
+  let row: number, col: number
+  if (i <= 4) { row = 1; col = i + 1 }
+  else if (i <= 7) { row = i - 3; col = 5 }
+  else if (i <= 12) { row = 5; col = 13 - i }
+  else { row = 17 - i; col = 1 }
+  const owner = rmOwner(i)
+  return {
+    gridRow: String(row),
+    gridColumn: String(col),
+    ...(owner ? { borderColor: rmTeamColor(owner.teamId) } : {}),
+  }
+}
+
+function rmRoll() { send({ t: 'richman:roll' }) }
+function rmDecide(accept: boolean) { send({ t: 'richman:decide', accept }) }
+
+// 骰子动画：rollId 变化时数字快速滚动 ~0.9s 再定格在服务端结果
+const rmDiceShow = ref(1)
+const rmRolling = ref(false)
+let rmDiceTimer: ReturnType<typeof setInterval> | undefined
+let rmDiceStop: ReturnType<typeof setTimeout> | undefined
+// 重连/中途加入时棋盘上已有历史骰子：标记一下，避免把它当新掷重播动画
+let rmEnteredWithDice = false
+watch(() => pv.value?.stage?.type === 'richman', (on: boolean, was: boolean) => {
+  if (on && !was) rmEnteredWithDice = !!rmc.value?.dice
+})
+watch(() => rmc.value?.dice?.rollId as string | undefined, (rollId: string | undefined) => {
+  if (rmDiceTimer) clearInterval(rmDiceTimer)
+  if (rmDiceStop) clearTimeout(rmDiceStop)
+  const dice = rmc.value?.dice
+  if (!rollId || !dice) { rmRolling.value = false; return }
+  if (rmEnteredWithDice) { rmEnteredWithDice = false; return }
+  rmRolling.value = true
+  rmDiceTimer = setInterval(() => { rmDiceShow.value = Math.floor(Math.random() * 6) + 1 }, 80)
+  rmDiceStop = setTimeout(() => {
+    if (rmDiceTimer) clearInterval(rmDiceTimer)
+    rmDiceShow.value = dice.value
+    rmRolling.value = false
+    const nav = navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean }
+    nav.vibrate?.(60)
+  }, 900)
+})
+
+// 结算 → 全场喷彩，冠军队成员加量
+watch(() => rmc.value?.finished as boolean | undefined, (f: boolean | undefined, old: boolean | undefined) => {
+  if (f && !old) {
+    const champId = rmc.value?.ranking?.[0]?.id
+    fireConfetti(champId && champId === pv.value?.me.teamId ? 130 : 80)
+  }
 })
 
 function doBuzz() {
@@ -623,6 +701,61 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
             <p v-else-if="wheelDone" class="muted" style="text-align:center">恭喜（还是默哀？）这位天选之子</p>
           </template>
         </div>
+      </div>
+
+      <div v-else-if="pv.stage.type === 'richman' && rmc" class="stage-panel stage-enter" :class="{ pulse: stagePulse }">
+        <template v-if="rmc.finished">
+          <div class="stage-kicker">大富翁 · 终局结算</div>
+          <div class="huge">🏆</div>
+          <h1 style="text-align:center">{{ rmc.ranking[0].token }} {{ rmc.ranking[0].name }} 夺冠</h1>
+          <div class="panel">
+            <div v-for="(r, i) in rmc.ranking" :key="r.id" class="score-row">
+              <span>{{ i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.` }} {{ r.token }}{{ r.name }}</span>
+              <span class="muted">💰{{ r.cash }} + 🏠{{ r.assets }} = <strong style="color:var(--gold)">{{ r.total }}</strong></span>
+            </div>
+          </div>
+        </template>
+        <template v-else>
+          <div class="stage-kicker">大富翁 · 第 {{ rmc.round }} 圈 · 轮到 {{ rmTeam(rmCurrentTeam).token }}{{ rmTeam(rmCurrentTeam).name }}</div>
+          <p v-if="rmc.lastEvent" class="rm-event" :class="rmc.lastEvent.tone">{{ rmc.lastEvent.text }}</p>
+          <div class="rm-board">
+            <div
+              v-for="(tile, i) in RICH_BOARD"
+              :key="i"
+              class="rm-tile"
+              :class="{ owned: rmOwner(i) }"
+              :style="rmCellStyle(i)"
+            >
+              <span class="rm-icon">{{ tile.icon }}</span>
+              <span class="rm-name">{{ tile.name }}<template v-if="tile.price"> · {{ tile.price }}</template></span>
+              <span v-if="rmOwner(i) && (rmOwner(i)?.level || 0) >= RICH_MAX_LEVEL" class="rm-lv">🏨</span>
+              <span v-if="rmTokensAt(i).length" class="rm-tokens">
+                <span v-for="t in rmTokensAt(i)" :key="t.id">{{ t.token }}</span>
+              </span>
+            </div>
+            <div class="rm-center">
+              <div class="rm-dice" :class="{ rolling: rmRolling }">🎲 {{ rmRolling ? rmDiceShow : (rmc.dice?.value ?? '–') }}</div>
+              <p class="muted rm-turn">{{ rmMyTurn ? '轮到你们队！' : '观战中' }}</p>
+            </div>
+          </div>
+          <div class="list rm-cash">
+            <span v-for="t in rmc.teams" :key="t.id" class="member" :style="{ borderColor: rmTeamColor(t.id) }">
+              {{ t.token }}{{ t.name }}
+              <strong :style="{ color: rmc.cash[t.id] < 0 ? 'var(--red)' : 'var(--gold)' }">💰{{ rmc.cash[t.id] }}</strong>
+              <span v-if="rmc.frozen[t.id]" class="tag warn">❄️冻结</span>
+            </span>
+          </div>
+          <button v-if="rmIsCaptain && rmMyTurn && !rmc.pending" class="full-width" @click="rmRoll">🎲 掷骰子</button>
+          <div v-else-if="rmIsCaptain && rmPendingMine" class="grid" style="margin-top:10px">
+            <button class="full-width" @click="rmDecide(true)">
+              {{ rmc.pending.kind === 'buy' ? '买下' : '升级' }} {{ RICH_BOARD[rmc.pending.tileIdx].icon }}{{ RICH_BOARD[rmc.pending.tileIdx].name }}（{{ rmc.pending.cost }} 金币）
+            </button>
+            <button class="ghost full-width" @click="rmDecide(false)">不{{ rmc.pending.kind === 'buy' ? '买' : '升级' }}</button>
+          </div>
+          <p v-else-if="rmMyTurn" class="muted" style="text-align:center;margin-top:10px">
+            {{ rmc.pending ? '队长正在纠结买不买…' : '等你们队的队长掷骰子' }}
+          </p>
+        </template>
       </div>
 
       <div v-else-if="pv.stage.type === 'whoami'" class="stage-panel stage-enter" :class="{ pulse: stagePulse }">

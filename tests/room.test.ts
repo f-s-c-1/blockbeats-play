@@ -427,6 +427,118 @@ describe('记分流水', () => {
   })
 })
 
+describe('大富翁', () => {
+  function setupRichman(playerCount = 4, teamCount = 2) {
+    const rt = createRoom('TEST')
+    const ids = joinPlayers(rt, playerCount)
+    reduce(rt, { t: 'draw:generate', teamCount, balance: false, actionId: aid() }, ADMIN)
+    const r = reduce(rt, { t: 'richman:start', actionId: aid() }, ADMIN)
+    expect(r.ok).toBe(true)
+    return { rt, ids, pl: rt.state.currentStage!.payload }
+  }
+
+  it('未分队不能开局；开局初始化金币/位置/回合', () => {
+    const rt = createRoom('TEST')
+    joinPlayers(rt, 4)
+    expect(reduce(rt, { t: 'richman:start', actionId: aid() }, ADMIN).error?.code).toBe('too_few')
+    reduce(rt, { t: 'draw:generate', teamCount: 2, balance: false, actionId: aid() }, ADMIN)
+    reduce(rt, { t: 'richman:start', actionId: aid() }, ADMIN)
+    const pl = rt.state.currentStage!.payload
+    expect(rt.state.currentStage!.type).toBe('richman')
+    expect(pl.order).toHaveLength(2)
+    for (const id of pl.order) {
+      expect(pl.cash[id]).toBe(20)
+      expect(pl.pos[id]).toBe(0)
+    }
+    expect(pl.turnIdx).toBe(0)
+    expect(pl.finished).toBe(false)
+  })
+
+  it('只有当前回合队长能掷骰；管理员可代掷；掷后状态自洽', () => {
+    const { rt, pl } = setupRichman()
+    const cur = pl.order[0] as string
+    const curTeam = rt.state.teams.find(t => t.id === cur)!
+    const otherTeam = rt.state.teams.find(t => t.id === pl.order[1])!
+    // 别队队长 / 本队非队长都不能掷
+    expect(reduce(rt, { t: 'richman:roll', actionId: aid() }, { role: 'player', playerId: otherTeam.captainId! }).error?.code).toBe('forbidden')
+    const nonCap = rt.state.members.find(m => m.teamId === cur && m.id !== curTeam.captainId)!
+    expect(reduce(rt, { t: 'richman:roll', actionId: aid() }, { role: 'player', playerId: nonCap.id }).error?.code).toBe('forbidden')
+    // 管理员代掷
+    expect(reduce(rt, { t: 'richman:roll', actionId: aid() }, ADMIN).ok).toBe(true)
+    expect(pl.dice.value).toBeGreaterThanOrEqual(1)
+    expect(pl.dice.value).toBeLessThanOrEqual(6)
+    expect(pl.pos[cur]).toBe(pl.dice.value % 16)
+    // 要么有待决定（回合停在原队），要么已轮到下一队
+    if (pl.pending) {
+      expect(pl.pending.teamId).toBe(cur)
+      expect(pl.turnIdx).toBe(0)
+    } else {
+      expect(pl.turnIdx).toBe(1)
+    }
+  })
+
+  it('冻结的队掷骰即跳过本回合并解冻', () => {
+    const { rt, pl } = setupRichman()
+    const cur = pl.order[0] as string
+    pl.frozen[cur] = true
+    reduce(rt, { t: 'richman:roll', actionId: aid() }, ADMIN)
+    expect(pl.frozen[cur]).toBeUndefined()
+    expect(pl.pos[cur]).toBe(0) // 没动
+    expect(pl.turnIdx).toBe(1)
+  })
+
+  it('买地：扣金币、登记所有权、回合推进；队长可自己决定', () => {
+    const { rt, pl } = setupRichman()
+    const [a] = pl.order as string[]
+    const captain = rt.state.teams.find(t => t.id === a)!.captainId!
+    pl.pending = { tileIdx: 1, teamId: a, kind: 'buy', cost: 4 }
+    // 掷骰被 pending 挡住
+    expect(reduce(rt, { t: 'richman:roll', actionId: aid() }, ADMIN).error?.code).toBe('pending')
+    const r = reduce(rt, { t: 'richman:decide', accept: true, actionId: aid() }, { role: 'player', playerId: captain })
+    expect(r.ok).toBe(true)
+    expect(pl.cash[a]).toBe(16)
+    expect(pl.owners[1]).toMatchObject({ teamId: a, level: 1 })
+    expect(pl.pending).toBeNull()
+    expect(pl.turnIdx).toBe(1)
+  })
+
+  it('随机对局 60 步不出错：位置始终在棋盘内，金币是有限数', () => {
+    const { rt, pl } = setupRichman(6, 3)
+    for (let i = 0; i < 60; i++) {
+      if (pl.pending) reduce(rt, { t: 'richman:decide', accept: i % 2 === 0, actionId: aid() }, ADMIN)
+      else reduce(rt, { t: 'richman:roll', actionId: aid() }, ADMIN)
+      for (const id of pl.order as string[]) {
+        expect(pl.pos[id]).toBeGreaterThanOrEqual(0)
+        expect(pl.pos[id]).toBeLessThan(16)
+        expect(Number.isFinite(pl.cash[id])).toBe(true)
+      }
+    }
+  })
+
+  it('结算：总资产 = 金币 + 地产投入，按降序排名；结算后禁止掷骰', () => {
+    const { rt, pl } = setupRichman()
+    const [a, b] = pl.order as string[]
+    pl.cash[a] = 10
+    pl.cash[b] = 31
+    pl.owners[1] = { teamId: a, level: 2 }  // 奶茶店 4×2 = 8
+    pl.owners[15] = { teamId: a, level: 1 } // 游乐场 12
+    reduce(rt, { t: 'richman:end', actionId: aid() }, ADMIN)
+    expect(pl.finished).toBe(true)
+    expect(pl.ranking[0]).toMatchObject({ id: b, total: 31 })
+    expect(pl.ranking[1]).toMatchObject({ id: a, cash: 10, assets: 20, total: 30 })
+    expect(reduce(rt, { t: 'richman:roll', actionId: aid() }, ADMIN).error?.code).toBe('finished')
+  })
+
+  it('玩家视图（C 类）能看到棋盘全量公开状态', () => {
+    const { rt, ids } = setupRichman()
+    const v = buildPlayerView(rt, ids[0])
+    expect(v.stage?.type).toBe('richman')
+    expect(v.stage?.content.cash).toBeDefined()
+    expect(v.stage?.content.order).toHaveLength(2)
+    expect(v.stage?.content.teams).toHaveLength(2)
+  })
+})
+
 describe('房间结束', () => {
   it('room:end 清空环节与 overlay，玩家看到结束页，新人无法加入', () => {
     const rt = createRoom('TEST')

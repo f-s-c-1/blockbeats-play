@@ -19,6 +19,7 @@ export type StageType =
   | 'whoami' // 猜猜我是谁（头带游戏：自己的词只有别人能看到）
   | 'storymix' // 疯狂故事组合（全员投稿 人名/地点/在做什么，随机拼句开奖）
   | 'wheel' // 随机点名转盘（全员同步动画定格天选之子）
+  | 'richman' // 大富翁（队伍当棋子，队长掷骰，买地收租，全员同屏看棋盘）
 
 export interface Player {
   id: string
@@ -91,6 +92,11 @@ export type ClientEvent =
   | { t: 'storymix:submit'; who: string; where: string; what: string; actionId: string }
   | { t: 'storymix:draw'; actionId: string }
   | { t: 'wheel:spin'; scope?: string; actionId: string } // scope: 'all' 或 teamId
+  | { t: 'richman:start'; actionId: string } // 开局（需已分队）
+  | { t: 'richman:roll'; actionId: string } // 掷骰：管理员或当前回合队长
+  | { t: 'richman:decide'; accept: boolean; actionId: string } // 买地/升级决定：管理员或当事队长
+  | { t: 'richman:next'; actionId: string } // 主持人强制推进回合（卡住兜底）
+  | { t: 'richman:end'; actionId: string } // 结算：金币+地产折算总资产排名
   | { t: 'lastman:start'; participantIds?: string[]; actionId: string }
   | { t: 'lastman:eliminate'; targetId: string; actionId: string }
   | { t: 'lastman:revive'; targetId: string; actionId: string }

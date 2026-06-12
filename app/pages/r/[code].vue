@@ -441,6 +441,9 @@ watch(() => pv.value?.stage?.type === 'richman', (on: boolean, was: boolean) => 
     rmDiceFaces.value = (rmc.value?.dice?.values || []) as number[]
     rmItemMode.value = 'none'
     rmSelTile.value = null
+    // 默认展开自己队的资产面板
+    const myTeam = pv.value?.me.teamId
+    rmSelTeam.value = myTeam && (rmc.value?.order || []).includes(myTeam) ? myTeam : null
   }
 })
 watch(() => rmc.value?.dice?.rollId as string | undefined, (rollId: string | undefined) => {
@@ -467,6 +470,40 @@ watch(() => rmc.value?.dice?.rollId as string | undefined, (rollId: string | und
 function rmPropCount(teamId: string) {
   return Object.values((rmc.value?.owners || {}) as Record<string, { teamId: string }>).filter(o => o.teamId === teamId).length
 }
+
+// —— 队伍资产面板：点队伍徽章查看（地产/租金/道具），默认看自己队 ——
+const rmSelTeam = ref<string | null>(null)
+const rmTeamInfo = computed(() => {
+  const id = rmSelTeam.value
+  if (!id || !rmc.value) return null
+  const team = rmTeam(id)
+  const owners = (rmc.value.owners || {}) as Record<string, { teamId: string; level: number }>
+  const props = Object.entries(owners)
+    .filter(([, o]) => o.teamId === id)
+    .map(([idx, o]) => {
+      const i = Number(idx)
+      const tile = RICH_BOARD[i]
+      const group = richGroupOf(i)
+      const hasSet = !!group && group.tiles.every(ti => owners[ti]?.teamId === id)
+      return {
+        idx: i, icon: tile.icon, name: tile.name, level: o.level,
+        groupColor: group?.color, hasSet,
+        rent: richRent(tile.price || 0, o.level, hasSet),
+        invested: (tile.price || 0) * o.level,
+      }
+    })
+    .sort((a, b) => a.idx - b.idx)
+  return {
+    id, name: team.name, token: (team as { token?: string }).token || '',
+    cash: rmc.value.cash?.[id] ?? 0,
+    assets: props.reduce((s, p) => s + p.invested, 0),
+    props,
+    items: ((rmc.value.items?.[id] || []) as string[]),
+    frozen: !!rmc.value.frozen?.[id],
+    mine: id === pv.value?.me.teamId,
+  }
+})
+function rmItemDesc(kind: string) { return RICH_ITEMS[kind as RichItemKind]?.desc || '' }
 
 // —— 机会/惩罚卡：全屏翻卡展示（落格动画走完才亮出来）——
 const rmCardShow = ref<null | { kind: string; title: string; text: string }>(null)
@@ -993,6 +1030,7 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
               </span>
             </div>
             <div class="rm-center">
+              <div class="rm-center-title">🎲 燃团大富翁</div>
               <div class="rm-dice-row" :class="{ rolling: rmRolling }">
                 <template v-if="rmDiceFaces.length">
                   <span v-for="(f, di) in rmDiceFaces" :key="di" class="dice-cube">
@@ -1017,13 +1055,46 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
             <span v-if="rmTileInfo.blocked" class="tag warn">🚧 有路障</span>
           </div>
           <div class="list rm-cash">
-            <span v-for="t in rmc.teams" :key="t.id" class="member" :style="{ borderColor: rmTeamColor(t.id) }">
+            <span
+              v-for="t in rmc.teams"
+              :key="t.id"
+              class="member clickable"
+              :class="{ alive: rmSelTeam === t.id }"
+              :style="{ borderColor: rmTeamColor(t.id) }"
+              @click="rmSelTeam = rmSelTeam === t.id ? null : t.id"
+            >
               {{ t.token }}{{ t.name }}
               <strong :style="{ color: rmc.cash[t.id] < 0 ? 'var(--red)' : 'var(--gold)' }">💰{{ rmc.cash[t.id] }}</strong>
               <span v-if="rmPropCount(t.id)" class="muted">🏠{{ rmPropCount(t.id) }}</span>
               <span v-for="(it, k) in rmc.items?.[t.id] || []" :key="k" :title="rmItemName(it)">{{ rmItemIcon(it) }}</span>
               <span v-if="rmc.frozen[t.id]" class="tag warn">🚔</span>
             </span>
+          </div>
+
+          <!-- 队伍资产面板：点队伍徽章切换 -->
+          <div v-if="rmTeamInfo" class="panel rm-teaminfo">
+            <div class="rm-teaminfo-head">
+              <strong>{{ rmTeamInfo.token }}{{ rmTeamInfo.name }}{{ rmTeamInfo.mine ? '（我们队）' : '' }} 的资产</strong>
+              <span>💰<strong style="color:var(--gold)">{{ rmTeamInfo.cash }}</strong> + 🏠<strong style="color:var(--gold)">{{ rmTeamInfo.assets }}</strong> = 总 {{ rmTeamInfo.cash + rmTeamInfo.assets }}</span>
+            </div>
+            <template v-if="rmTeamInfo.props.length">
+              <div v-for="p in rmTeamInfo.props" :key="p.idx" class="score-row">
+                <span>
+                  <span v-if="p.groupColor" class="rm-groupdot" :style="{ background: p.groupColor }" />
+                  {{ p.icon }}{{ p.name }}{{ p.level >= RICH_MAX_LEVEL ? ' 🏨豪华店' : '' }}
+                  <span v-if="p.hasSet" class="tag info">🔗成套</span>
+                </span>
+                <span class="muted">过路费 {{ p.rent }}</span>
+              </div>
+            </template>
+            <p v-else class="muted" style="margin:4px 0">还没有地产——踩到无主格，队长买它！</p>
+            <div v-if="rmTeamInfo.items.length" class="grid" style="gap:4px;margin-top:6px">
+              <p v-for="(it, k) in rmTeamInfo.items" :key="k" class="muted" style="margin:0">
+                {{ rmItemIcon(it) }} <strong>{{ rmItemName(it) }}</strong>：{{ rmItemDesc(it) }}
+              </p>
+            </div>
+            <p v-else class="muted" style="margin:6px 0 0">没有道具（踩 ❓机会格有机会捡到）</p>
+            <p v-if="rmTeamInfo.frozen" class="muted" style="margin:6px 0 0">🚔 关押中：轮到时可花 {{ RICH_BAIL_COST }} 金币保释</p>
           </div>
 
           <!-- 队长操作区 -->

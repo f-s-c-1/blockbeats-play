@@ -691,12 +691,13 @@ button.nav-pill:active { transform: none; }
 
 /* ── 大富翁棋盘：5×5 外圈 16 格 + 中央骰子区 ── */
 /* 伪 3D 桌游视角：棋盘向后倾倒，棋子/骰子反向立起（纯 CSS transform，零性能负担） */
-.rm-stage { perspective: 980px; padding-bottom: 8px; }
+/* 棋盘按手机尺寸设计：桌面上限宽居中，不随屏幕等比放大 */
+.rm-stage { perspective: 980px; padding-bottom: 8px; max-width: 440px; margin: 0 auto; }
 .rm-board {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   grid-template-rows: repeat(5, minmax(0, 1fr));
-  gap: 4px;
+  gap: 5px;
   aspect-ratio: 1;
   margin: -12px 0 -14px;
   transform: rotateX(22deg) scale(.97);
@@ -741,13 +742,15 @@ button.nav-pill:active { transform: none; }
   line-height: 1;
   filter: drop-shadow(0 2px 2px rgba(0, 0, 0, .65));
 }
-.rm-icon { font-size: 19px; line-height: 1.15; }
+.rm-icon { font-size: clamp(19px, 5.4vw, 24px); line-height: 1.15; }
 .rm-name {
   max-width: 100%;
   overflow: hidden;
   white-space: nowrap;
-  font-size: 9px;
-  color: var(--muted);
+  font-size: clamp(9px, 2.6vw, 11px);
+  font-weight: 700;
+  color: var(--text);
+  opacity: .82;
 }
 .rm-lv { position: absolute; top: 1px; left: 2px; font-size: 11px; line-height: 1; }
 .rm-tokens {
@@ -766,12 +769,25 @@ button.nav-pill:active { transform: none; }
   grid-area: 2 / 2 / 5 / 5;
   display: grid;
   place-content: center;
+  gap: 2px;
   text-align: center;
-  border: 1.5px dashed var(--border);
+  border: 1.5px solid var(--border);
   border-radius: var(--r);
-  background: rgba(0, 0, 0, .24);
+  background:
+    radial-gradient(220px 130px at 50% 30%, rgba(255, 157, 46, .14), transparent 75%),
+    radial-gradient(1.2px 1.2px at 22% 24%, rgba(255, 244, 214, .4), transparent 100%),
+    radial-gradient(1.2px 1.2px at 76% 70%, rgba(255, 244, 214, .3), transparent 100%),
+    rgba(0, 0, 0, .3);
   padding: 6px;
   transform-style: preserve-3d;
+}
+.rm-center-title {
+  font-family: var(--font-display);
+  font-size: clamp(15px, 4.4vw, 19px);
+  color: var(--gold);
+  letter-spacing: .12em;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, .5);
+  margin-bottom: 4px;
 }
 /* 骰子立在棋盘中央 */
 .rm-center .rm-dice-row { transform: rotateX(-24deg) translateZ(10px); }
@@ -867,6 +883,17 @@ button.nav-pill:active { transform: none; }
   background: rgba(255, 210, 63, .16);
   color: var(--gold);
 }
+/* 队伍资产面板 */
+.rm-teaminfo { margin-bottom: 10px; }
+.rm-teaminfo-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
 /* 管理端地产分组色点 */
 .rm-groupdot { display: inline-block; width: 9px; height: 9px; margin-right: 3px; border-radius: 50%; }
 

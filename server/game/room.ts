@@ -173,18 +173,41 @@ function richResolveMove(s: RoomState, pl: Record<string, any>, cur: string, ste
       tone = 'bad'
       notes.push(`🚔 进拘留所！下次轮到时可花 ${RICH_BAIL_COST} 金币保释，或认栽跳过一回合`)
       break
-    case 'punish':
+    case 'punish': {
+      const pun = pick(PUNISHMENTS)
       tone = 'punish'
-      notes.push(`😈 踩中惩罚格：${pick(PUNISHMENTS)}`)
+      // 结构化卡片：玩家端全屏翻卡展示，不再只混在事件文字里
+      pl.card = { id: uid('card'), kind: 'punish', title: '😈 惩罚时间', text: pun }
+      notes.push(`😈 踩中惩罚格：${pun}`)
       break
+    }
     case 'chance': {
-      const card = pick(RICH_CHANCES)
+      // 整副洗牌依次抽，抽完重洗——避免纯随机的连续重复
+      let deck = pl.chanceDeck as number[] | undefined
+      if (!deck?.length) deck = shuffle(RICH_CHANCES.map((_, i) => i))
+      const card = RICH_CHANCES[deck.pop()!]
+      pl.chanceDeck = deck
+      pl.card = { id: uid('card'), kind: 'chance', title: '❓ 机会卡', text: card.text }
       const others = (pl.order as string[]).filter(id => id !== cur)
       const myProps = Object.values(pl.owners as Record<string, { teamId: string }>).filter(o => o.teamId === cur).length
       notes.push(`❓ 机会卡：${card.text}`)
       if (card.cash) pl.cash[cur] += card.cash
       else if (card.kind === 'collect1') { for (const o of others) pl.cash[o] -= 1; pl.cash[cur] += others.length }
       else if (card.kind === 'pay1') { for (const o of others) pl.cash[o] += 1; pl.cash[cur] -= others.length }
+      else if (card.kind === 'robRich') {
+        const rich = [...others].sort((a, b) => pl.cash[b] - pl.cash[a])[0]
+        if (rich) {
+          pl.cash[rich] -= 2; pl.cash[cur] += 2
+          notes.push(`抢了 ${richTeam(pl, rich).name} 2 金币`)
+        }
+      }
+      else if (card.kind === 'almsPoor') {
+        const poor = [...others].sort((a, b) => pl.cash[a] - pl.cash[b])[0]
+        if (poor) {
+          pl.cash[poor] += 2; pl.cash[cur] -= 2
+          notes.push(`捐给了 ${richTeam(pl, poor).name} 2 金币`)
+        }
+      }
       else if (card.kind === 'freeze') { pl.frozen[cur] = true; pl.bonus = false }
       else if (card.kind === 'perProp') pl.cash[cur] += myProps * 2
       else if (card.kind === 'taxProp') pl.cash[cur] -= myProps
@@ -194,7 +217,7 @@ function richResolveMove(s: RoomState, pl: Record<string, any>, cur: string, ste
         if (bag.length >= RICH_MAX_ITEMS) { pl.cash[cur] += 2; notes.push('道具袋满了，折现 +2') }
         else bag.push(kind)
       }
-      if ((card.cash ?? 0) < 0 || card.kind === 'pay1' || card.kind === 'freeze' || card.kind === 'taxProp') tone = 'bad'
+      if ((card.cash ?? 0) < 0 || card.kind === 'pay1' || card.kind === 'freeze' || card.kind === 'taxProp' || card.kind === 'almsPoor') tone = 'bad'
       break
     }
     case 'prop': {
@@ -678,6 +701,7 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
           dice: null,
           pending: null,
           lastEvent: null,
+          card: null, // 最近抽到的机会/惩罚卡 { id, kind, title, text }
           log: [],
           finished: false,
           ranking: null,

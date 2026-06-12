@@ -73,21 +73,34 @@ export const RICH_COLORS = ['#ff9d2e', '#a3e635', '#ffd23f', '#38bdf8', '#f472b6
 export interface RichChance {
   text: string
   cash?: number // 直接加减金币
-  kind?: 'collect1' | 'pay1' | 'freeze' | 'perProp' | 'taxProp' | 'item_dice' | 'item_block' | 'item_shield'
+  kind?: 'collect1' | 'pay1' | 'freeze' | 'perProp' | 'taxProp' | 'robRich' | 'almsPoor'
+    | 'item_dice' | 'item_block' | 'item_shield'
 }
 
+// 机会卡池：服务端整副洗牌后依次抽（抽完重洗），同一轮内不会重复
 export const RICH_CHANCES: RichChance[] = [
   { text: '团队气运爆棚，领 4 金币', cash: 4 },
   { text: '捡到锦鲤红包，领 3 金币', cash: 3 },
   { text: '中了大乐透！领 6 金币', cash: 6 },
+  { text: '股票涨停！领 5 金币', cash: 5 },
+  { text: '年终奖到账！领 5 金币', cash: 5 },
+  { text: '团建报销批下来了，领 3 金币', cash: 3 },
+  { text: '捡瓶子卖了 1 金币，运气一般般', cash: 1 },
   { text: '请全场喝奶茶，付 3 金币', cash: -3 },
   { text: '手机掉进火锅，捞出来修花 2 金币', cash: -2 },
+  { text: '股票跌停！付 4 金币', cash: -4 },
+  { text: '手机碎屏，换屏花 3 金币', cash: -3 },
+  { text: '深夜路边摊撸串，花 1 金币', cash: -1 },
   { text: '收物业费：其他每队付给你 1 金币', kind: 'collect1' },
   { text: '大方发红包：付给其他每队 1 金币', kind: 'pay1' },
+  { text: '打劫首富！从最有钱的队抢 2 金币', kind: 'robRich' },
+  { text: '扶贫献爱心：给最穷的队 2 金币', kind: 'almsPoor' },
   { text: '被草原寒风冻住！下回合跳过', kind: 'freeze' },
   { text: '地产大丰收：每拥有 1 处地产领 2 金币', kind: 'perProp' },
   { text: '税务稽查：每拥有 1 处地产缴 1 金币', kind: 'taxProp' },
   { text: '路边捡到 🎮 遥控骰子！', kind: 'item_dice' },
+  { text: '又摸到一个 🎮 遥控骰子！', kind: 'item_dice' },
   { text: '工地顺来一个 🚧 路障！', kind: 'item_block' },
+  { text: '又顺来一个 🚧 路障！', kind: 'item_block' },
   { text: '物业送你 🛡️ 免租卡！', kind: 'item_shield' },
 ]

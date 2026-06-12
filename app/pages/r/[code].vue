@@ -26,6 +26,7 @@ const notice = ref<{ text: string; tone: 'ok' | 'error' } | null>(null)
 
 onMounted(() => {
   disguised.value = localStorage.getItem(DISGUISE_KEY) === '1'
+  soundOn.value = localStorage.getItem(SOUND_KEY) !== '0'
   // iOS/Chrome 要求用户先交互才允许出声：首次触摸即解锁 AudioContext
   document.addEventListener('pointerdown', unlockAudio, { once: true })
   timer = setInterval(() => { now.value = Date.now() }, 250)
@@ -48,6 +49,9 @@ onUnmounted(() => {
   if (rmDiceStop) clearTimeout(rmDiceStop)
   if (rmStepTimer) clearInterval(rmStepTimer)
   if (rmStepDelay) clearTimeout(rmStepDelay)
+  if (rmCardFallback) clearTimeout(rmCardFallback)
+  if (rmCardHide) clearTimeout(rmCardHide)
+  if (rmLandClear) clearTimeout(rmLandClear)
 })
 
 watch(joined, (j) => {
@@ -123,6 +127,15 @@ function triggerStageCue() {
   pulseTimer = setTimeout(() => { stagePulse.value = false }, 760)
 }
 
+// 音效总开关（本机记忆，默认开）
+const SOUND_KEY = `caoyuan:${code}:sound`
+const soundOn = ref(true)
+function toggleSound() {
+  soundOn.value = !soundOn.value
+  localStorage.setItem(SOUND_KEY, soundOn.value ? '1' : '0')
+  if (soundOn.value) play('coinUp')
+}
+
 // 环节切换提示音（PRD §9.3：震动 + 提示音唤起注意）
 let audioCtx: AudioContext | null = null
 function unlockAudio() {
@@ -151,6 +164,40 @@ function playCue() {
     osc.stop(audioCtx.currentTime + 0.3)
   } catch { /* 不支持音频则静默 */ }
 }
+
+// —— 合成音效引擎：纯 WebAudio 振荡器，无音频文件 ——
+function sfxTone(freq: number, durMs: number, delayMs = 0, type: OscillatorType = 'sine', vol = 0.09) {
+  try {
+    const Ctx = window.AudioContext || (window as any).webkitAudioContext
+    if (!Ctx) return
+    audioCtx ||= new Ctx()
+    if (audioCtx.state === 'suspended') return
+    const t0 = audioCtx.currentTime + delayMs / 1000
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    osc.type = type
+    osc.frequency.setValueAtTime(freq, t0)
+    gain.gain.setValueAtTime(vol, t0)
+    gain.gain.exponentialRampToValueAtTime(0.001, t0 + durMs / 1000)
+    osc.connect(gain).connect(audioCtx.destination)
+    osc.start(t0)
+    osc.stop(t0 + durMs / 1000)
+  } catch { /* 不支持音频则静默 */ }
+}
+
+const SFX = {
+  dice() { for (let i = 0; i < 9; i++) sfxTone(160 + Math.random() * 260, 70, i * 125, 'square', 0.045) },
+  step() { sfxTone(660 + Math.random() * 120, 55, 0, 'square', 0.05) },
+  land() { sfxTone(180, 160, 0, 'sine', 0.14); sfxTone(120, 220, 30, 'sine', 0.12) },
+  coinUp() { [523, 659, 784].forEach((f, i) => sfxTone(f, 130, i * 70, 'triangle', 0.09)) },
+  coinDown() { [392, 311, 262].forEach((f, i) => sfxTone(f, 150, i * 85, 'sawtooth', 0.055)) },
+  card() { sfxTone(740, 90, 0, 'sine', 0.08); sfxTone(1109, 110, 95, 'sine', 0.08); sfxTone(1480, 140, 190, 'sine', 0.07) },
+  buy() { [523, 659, 784, 1047].forEach((f, i) => sfxTone(f, 160, i * 65, 'triangle', 0.085)) },
+  jail() { [330, 262, 196].forEach((f, i) => sfxTone(f, 220, i * 160, 'sawtooth', 0.07)) },
+  punish() { [220, 233, 220, 208].forEach((f, i) => sfxTone(f, 180, i * 120, 'sawtooth', 0.08)) },
+  win() { [523, 659, 784, 1047, 1319, 1568].forEach((f, i) => sfxTone(f, 240, i * 110, 'triangle', 0.1)) },
+}
+function play(k: keyof typeof SFX) { if (soundOn.value) SFX[k]() }
 
 function showNotice(text: string, tone: 'ok' | 'error' = 'ok') {
   notice.value = { text, tone }
@@ -371,7 +418,9 @@ watch(() => rmc.value?.lastGuess as { sum: number; correct: string[] } | null, (
   }
 })
 
-// —— 骰子动画：rollId 变化时数字快速滚动 ~0.9s 再定格在服务端结果 ——
+// —— 骰子动画：rollId 变化时数字快速滚动 ~1.2s 再定格在服务端结果 ——
+const RM_DICE_MS = 1200 // 骰子滚动时长
+const RM_STEP_MS = 320  // 棋子每格耗时（放慢，配走格音）
 const rmDiceShow = ref('?')
 const rmRolling = ref(false)
 let rmDiceTimer: ReturnType<typeof setInterval> | undefined
@@ -381,11 +430,13 @@ const rmDiceText = computed(() => {
   if (!vs.length) return '–'
   return vs.length === 2 ? `${vs[0]}+${vs[1]}=${vs[0] + vs[1]}` : `${vs[0]}`
 })
-// 重连/中途加入时棋盘上已有历史骰子：标记一下，避免把它当新掷重播动画
+// 重连/中途加入时棋盘上已有历史骰子/卡片：标记一下，避免当成新事件重播
 let rmEnteredWithDice = false
+let rmCardSeen = ''
 watch(() => pv.value?.stage?.type === 'richman', (on: boolean, was: boolean) => {
   if (on && !was) {
     rmEnteredWithDice = !!rmc.value?.dice
+    rmCardSeen = rmc.value?.card?.id || ''
     rmItemMode.value = 'none'
     rmSelTile.value = null
   }
@@ -397,6 +448,7 @@ watch(() => rmc.value?.dice?.rollId as string | undefined, (rollId: string | und
   if (!rollId || !dice) { rmRolling.value = false; return }
   if (rmEnteredWithDice) { rmEnteredWithDice = false; return }
   rmRolling.value = true
+  play('dice')
   const twin = (dice.values as number[]).length === 2
   rmDiceTimer = setInterval(() => {
     const a = Math.floor(Math.random() * 6) + 1
@@ -408,17 +460,55 @@ watch(() => rmc.value?.dice?.rollId as string | undefined, (rollId: string | und
     rmRolling.value = false
     const nav = navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean }
     nav.vibrate?.(60)
-  }, 900)
+  }, RM_DICE_MS)
+})
+
+// —— 机会/惩罚卡：全屏翻卡展示（落格动画走完才亮出来）——
+const rmCardShow = ref<null | { kind: string; title: string; text: string }>(null)
+let rmPendingCard: { id: string; kind: string; title: string; text: string } | null = null
+let rmCardFallback: ReturnType<typeof setTimeout> | undefined
+let rmCardHide: ReturnType<typeof setTimeout> | undefined
+function rmRevealCard() {
+  if (!rmPendingCard) return
+  if (rmCardFallback) clearTimeout(rmCardFallback)
+  rmCardShow.value = rmPendingCard
+  rmPendingCard = null
+  play(rmCardShow.value.kind === 'punish' ? 'punish' : 'card')
+  const nav = navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean }
+  nav.vibrate?.([60, 50, 60])
+  if (rmCardHide) clearTimeout(rmCardHide)
+  rmCardHide = setTimeout(() => { rmCardShow.value = null }, 8000)
+}
+watch(() => rmc.value?.card?.id as string | undefined, (id: string | undefined) => {
+  const card = rmc.value?.card
+  if (!id || !card || id === rmCardSeen) return
+  rmCardSeen = id
+  rmPendingCard = card
+  // 兜底：万一没有走格动画（重连错过），4 秒内也一定亮卡
+  if (rmCardFallback) clearTimeout(rmCardFallback)
+  rmCardFallback = setTimeout(rmRevealCard, 4000)
 })
 
 // —— 棋子逐格移动动画（参考 javascript-monopoly 的 timed-interval 走格）——
 // rmAnimPos 是棋子的"显示位置"，落后于服务端真实位置逐格追赶
 const rmAnimPos = ref<Record<string, number>>({})
+const rmLandedTile = ref<number | null>(null) // 刚落定的格子：爆闪一下
 let rmStepTimer: ReturnType<typeof setInterval> | undefined
 let rmStepDelay: ReturnType<typeof setTimeout> | undefined
+let rmLandClear: ReturnType<typeof setTimeout> | undefined
 function rmTokensAt(idx: number) {
   return ((rmc.value?.teams || []) as { id: string; token: string }[])
     .filter(t => (rmAnimPos.value[t.id] ?? rmc.value.pos[t.id]) === idx)
+}
+function rmLandEffects(tile: number) {
+  rmLandedTile.value = tile
+  play('land')
+  const nav = navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean }
+  nav.vibrate?.(90)
+  if (rmLandClear) clearTimeout(rmLandClear)
+  rmLandClear = setTimeout(() => { rmLandedTile.value = null }, 1400)
+  // 落定后再亮机会/惩罚卡，节奏：走格 → 落地砰 → 翻卡
+  setTimeout(rmRevealCard, 350)
 }
 watch(() => (rmc.value ? JSON.stringify(rmc.value.pos) : null), (s: string | null) => {
   if (rmStepTimer) clearInterval(rmStepTimer)
@@ -434,18 +524,39 @@ watch(() => (rmc.value ? JSON.stringify(rmc.value.pos) : null), (s: string | nul
   const start = () => {
     rmStepTimer = setInterval(() => {
       const cur = rmAnimPos.value[id]
-      if (cur === target) { if (rmStepTimer) clearInterval(rmStepTimer); return }
+      if (cur === target) {
+        if (rmStepTimer) clearInterval(rmStepTimer)
+        rmLandEffects(target)
+        return
+      }
       rmAnimPos.value = { ...rmAnimPos.value, [id]: ((cur ?? 0) + 1) % RICH_BOARD.length }
-    }, 170)
+      play('step')
+    }, RM_STEP_MS)
   }
-  // 配合骰子动画：先滚骰 ~0.9s 再起步走格
-  rmStepDelay = setTimeout(start, rmRolling.value ? 950 : 120)
+  // 配合骰子动画：先滚骰再起步走格
+  rmStepDelay = setTimeout(start, rmRolling.value ? RM_DICE_MS + 80 : 150)
+})
+
+// —— 事件音效：金币进出（本队）/ 有人买地 / 本队进局子 ——
+watch(() => rmc.value?.cash?.[pv.value?.me.teamId || ''] as number | undefined, (now: number | undefined, old: number | undefined) => {
+  if (typeof now !== 'number' || typeof old !== 'number' || now === old) return
+  // 等走格动画放完再响钱声
+  const wait = rmRolling.value ? RM_DICE_MS + 6 * RM_STEP_MS : 0
+  const k = now > old ? 'coinUp' : 'coinDown'
+  setTimeout(() => play(k), wait)
+})
+watch(() => (rmc.value ? JSON.stringify(rmc.value.owners) : null), (s: string | null, old: string | null) => {
+  if (s && old && s !== old) play('buy')
+})
+watch(() => !!rmc.value?.frozen?.[pv.value?.me.teamId || ''], (f: boolean, old: boolean) => {
+  if (f && !old) play('jail')
 })
 
 // 结算 → 全场喷彩，冠军队成员加量
 watch(() => rmc.value?.finished as boolean | undefined, (f: boolean | undefined, old: boolean | undefined) => {
   if (f && !old) {
     const champId = rmc.value?.ranking?.[0]?.id
+    play('win')
     fireConfetti(champId && champId === pv.value?.me.teamId ? 130 : 80)
   }
 })
@@ -555,6 +666,14 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
         }"
       />
     </div>
+    <div v-if="rmCardShow" class="rm-card-mask" @click="rmCardShow = null">
+      <div class="rm-card-pop" :class="rmCardShow.kind">
+        <div class="rm-card-title">{{ rmCardShow.title }}</div>
+        <div class="rm-card-text">{{ rmCardShow.text }}</div>
+        <p class="muted" style="margin:14px 0 0;font-size:12px">点任意处关闭</p>
+      </div>
+    </div>
+
     <div v-if="pv?.overlays" class="overlay-bar">
       <div v-if="pv.overlays.announce" class="banner">📢 {{ pv.overlays.announce.text }}</div>
       <div v-if="pv.overlays.timer" class="banner timer-banner" :class="{ urgent: timerUrgent || timerRemain === 0 }">
@@ -571,8 +690,11 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
           <div class="muted">{{ pv?.team?.name || stageName }}</div>
         </div>
       </div>
-      <span class="pill" :class="connected ? 'live' : 'warn'">
-        <span class="dot" :class="connected ? 'on' : 'off'" />{{ connected ? '在线' : '重连中' }}
+      <span style="display:inline-flex;gap:6px;align-items:center">
+        <button class="sm ghost icon" :title="soundOn ? '关闭音效' : '开启音效'" @click="toggleSound">{{ soundOn ? '🔊' : '🔇' }}</button>
+        <span class="pill" :class="connected ? 'live' : 'warn'">
+          <span class="dot" :class="connected ? 'on' : 'off'" />{{ connected ? '在线' : '重连中' }}
+        </span>
       </span>
     </div>
 
@@ -846,6 +968,8 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
                 owned: rmOwner(i),
                 selected: rmSelTile === i,
                 targetable: rmItemMode === 'block' && i !== 0 && !rmc.blocks?.[i],
+                landed: rmLandedTile === i,
+                here: rmTokensAt(i).some(tt => tt.id === rmCurrentTeam),
               }"
               :style="rmCellStyle(i)"
               @click="rmTileTap(i)"
@@ -856,7 +980,7 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
               <span v-if="rmOwner(i) && (rmOwner(i)?.level || 0) >= RICH_MAX_LEVEL" class="rm-lv">🏨</span>
               <span v-if="rmc.blocks?.[i]" class="rm-blockmark">🚧</span>
               <span v-if="rmTokensAt(i).length" class="rm-tokens">
-                <span v-for="t in rmTokensAt(i)" :key="t.id">{{ t.token }}</span>
+                <span v-for="t in rmTokensAt(i)" :key="t.id + '@' + i" class="rm-token-hop">{{ t.token }}</span>
               </span>
             </div>
             <div class="rm-center">

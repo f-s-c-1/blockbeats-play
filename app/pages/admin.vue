@@ -1008,6 +1008,9 @@ function formatTime(ts: number) {
           </div>
           <template v-else>
             <p class="toast">{{ rm.lastEvent?.text }}</p>
+            <div v-if="rm.card" class="banner" :style="rm.card.kind === 'punish' ? 'background:var(--red);color:#fff;box-shadow:0 3px 0 var(--red-edge)' : ''">
+              {{ rm.card.title }}：{{ rm.card.text }}
+            </div>
             <div class="section-actions">
               <span class="tag info">第 {{ rm.round }} 圈 · 轮到 {{ rmToken(rmCurrent) }}{{ rmTeamName(rmCurrent) }}<template v-if="rmDiceText"> · 🎲 {{ rmDiceText }}</template></span>
               <button class="sm" :disabled="!!rm.pending" @click="rollRichman">🎲 代掷骰子</button>

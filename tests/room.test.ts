@@ -614,6 +614,25 @@ describe('大富翁', () => {
     expect(pl.guesses).toEqual({}) // 开骰后清空
   })
 
+  it('机会卡：整副洗牌依次抽不重复，结构化卡片随事件下发', () => {
+    const { rt, pl } = setupRichman()
+    const [a] = pl.order as string[]
+    const drawn: string[] = []
+    // 反复用遥控骰子精准踩 2 号机会格（10 号也是机会格，但固定踩 2 号最稳）
+    for (let i = 0; i < 10; i++) {
+      pl.turnIdx = 0
+      pl.pos[a] = 0
+      pl.items[a] = ['dice']
+      reduce(rt, { t: 'richman:item', kind: 'dice', value: 2, actionId: aid() }, ADMIN)
+      expect(pl.card).toBeTruthy()
+      expect(pl.card.kind).toBe('chance')
+      expect(pl.card.text).toBeTruthy()
+      drawn.push(pl.card.text)
+    }
+    // 同一副牌内（24 张抽 10 张）不会出现重复
+    expect(new Set(drawn).size).toBe(drawn.length)
+  })
+
   it('随机对局 60 步不出错：位置始终在棋盘内，金币是有限数', () => {
     const { rt, pl } = setupRichman(6, 3)
     for (let i = 0; i < 60; i++) {

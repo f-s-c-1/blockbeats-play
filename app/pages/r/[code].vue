@@ -355,13 +355,13 @@ function rmTeamColor(teamId: string) {
 function rmOwner(idx: number): { teamId: string; level: number } | undefined {
   return rmc.value?.owners?.[idx]
 }
-// 16 格映射到 5×5 外圈：上 5 → 右 3 → 下 5（右往左）→ 左 3（下往上）
+// 24 格映射到 7×7 外圈：上 7 → 右 5 → 下 7（右往左）→ 左 5（下往上）
 function rmCellStyle(i: number) {
   let row: number, col: number
-  if (i <= 4) { row = 1; col = i + 1 }
-  else if (i <= 7) { row = i - 3; col = 5 }
-  else if (i <= 12) { row = 5; col = 13 - i }
-  else { row = 17 - i; col = 1 }
+  if (i <= 6) { row = 1; col = i + 1 }
+  else if (i <= 11) { row = i - 5; col = 7 }
+  else if (i <= 18) { row = 7; col = 19 - i }
+  else { row = 25 - i; col = 1 }
   const owner = rmOwner(i)
   return {
     gridRow: String(row),
@@ -1067,7 +1067,8 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
               <strong :style="{ color: rmc.cash[t.id] < 0 ? 'var(--red)' : 'var(--gold)' }">💰{{ rmc.cash[t.id] }}</strong>
               <span v-if="rmPropCount(t.id)" class="muted">🏠{{ rmPropCount(t.id) }}</span>
               <span v-for="(it, k) in rmc.items?.[t.id] || []" :key="k" :title="rmItemName(it)">{{ rmItemIcon(it) }}</span>
-              <span v-if="rmc.frozen[t.id]" class="tag warn">🚔</span>
+              <span v-if="rmc.bankrupt?.[t.id]" class="tag spy">🏚️破产</span>
+              <span v-else-if="rmc.frozen[t.id]" class="tag warn">🚔</span>
             </span>
           </div>
 
@@ -1094,7 +1095,8 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
               </p>
             </div>
             <p v-else class="muted" style="margin:6px 0 0">没有道具（踩 ❓机会格有机会捡到）</p>
-            <p v-if="rmTeamInfo.frozen" class="muted" style="margin:6px 0 0">🚔 关押中：轮到时可花 {{ RICH_BAIL_COST }} 金币保释</p>
+            <p v-if="rmc.bankrupt?.[rmTeamInfo.id]" class="muted" style="margin:6px 0 0;color:var(--red)">🏚️ 已破产出局：地产被变卖抵债，回合自动跳过</p>
+            <p v-else-if="rmTeamInfo.frozen" class="muted" style="margin:6px 0 0">🚔 关押中：轮到时可花 {{ RICH_BAIL_COST }} 金币保释</p>
           </div>
 
           <!-- 队长操作区 -->

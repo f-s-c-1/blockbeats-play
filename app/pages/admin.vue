@@ -1033,7 +1033,8 @@ function formatTime(ts: number) {
             <span>
               {{ t.token }}{{ t.name }}
               <span v-if="rmCurrent === t.id" class="tag live">行动中</span>
-              <span v-if="rm.frozen[t.id]" class="tag warn">🚔 关押中</span>
+              <span v-if="rm.bankrupt?.[t.id]" class="tag spy">🏚️ 破产</span>
+              <span v-else-if="rm.frozen[t.id]" class="tag warn">🚔 关押中</span>
               <span v-for="(it, k) in rm.items?.[t.id] || []" :key="k" :title="rmItemName(it)">{{ rmItemIcon(it) }}</span>
             </span>
             <span>

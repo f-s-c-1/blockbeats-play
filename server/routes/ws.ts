@@ -6,6 +6,7 @@ import type { Peer } from 'crossws'
 import type { ClientEvent, ServerEvent } from '../../shared/types'
 import { reduce, buildPlayerView, buildAdminView } from '../game/room'
 import { getRoom, newRoom, genCode, markDirty } from '../game/manager'
+import { RICH_BOARD, richGroupOf } from '../../shared/richman'
 
 // 连接绑定的会话信息
 interface Session {
@@ -111,15 +112,41 @@ function scheduleRichmanBot(code: string) {
     if (!bot) return
     const pl = rt2.state.currentStage!.payload
     const actionId = `bot_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
-    let ev: ClientEvent
+    let ev: ClientEvent | null = null
     if (pl.pending) {
       // 买地策略：买完还能剩 2 金币就买
       ev = { t: 'richman:decide', accept: pl.cash[bot] - pl.pending.cost >= 2, actionId }
-    } else if (pl.frozen[bot] && pl.cash[bot] >= 4) {
-      ev = { t: 'richman:bail', actionId }
+    } else if (pl.frozen[bot]) {
+      if (pl.cash[bot] >= 4) ev = { t: 'richman:bail', actionId }
     } else {
-      ev = { t: 'richman:roll', actionId }
+      const bag = (pl.items[bot] || []) as string[]
+      // 遥控骰子：6 步内有买得起的无主地 → 精准开过去（优先能凑成套的，其次贵的）
+      if (bag.includes('dice')) {
+        let bestV = 0, bestScore = 0
+        for (let v = 1; v <= 6; v++) {
+          const to = (pl.pos[bot] + v) % RICH_BOARD.length
+          const tile = RICH_BOARD[to]
+          if (tile.type !== 'prop' || pl.owners[to] || pl.blocks[to]) continue
+          if (pl.cash[bot] - tile.price! < 2) continue
+          const group = richGroupOf(to)
+          const completesSet = !!group && group.tiles.every(ti => ti === to || pl.owners[ti]?.teamId === bot)
+          const score = (completesSet ? 100 : 0) + tile.price!
+          if (score > bestScore) { bestScore = score; bestV = v }
+        }
+        if (bestV) ev = { t: 'richman:item', kind: 'dice', value: bestV, actionId }
+      }
+      // 路障：埋在下一队前方 5-9 步（最可能踩中的区间），放完本回合照常掷骰
+      if (!ev && bag.includes('block')) {
+        const nextTeam = pl.order[(pl.turnIdx + 1) % pl.order.length] as string
+        const cands: number[] = []
+        for (let d = 5; d <= 9; d++) {
+          const ti = (pl.pos[nextTeam] + d) % RICH_BOARD.length
+          if (ti !== 0 && !pl.blocks[ti]) cands.push(ti)
+        }
+        if (cands.length) ev = { t: 'richman:item', kind: 'block', tileIdx: cands[Math.floor(Math.random() * cands.length)], actionId }
+      }
     }
+    ev ||= { t: 'richman:roll', actionId }
     reduce(rt2, ev, { role: 'admin' })
     markDirty(code)
     broadcast(code)

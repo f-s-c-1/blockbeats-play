@@ -477,7 +477,7 @@ describe('大富翁', () => {
     expect(rt.state.currentStage!.type).toBe('richman')
     expect(pl.order).toHaveLength(2)
     for (const id of pl.order) {
-      expect(pl.cash[id]).toBe(20)
+      expect(pl.cash[id]).toBe(25)
       expect(pl.pos[id]).toBe(0)
     }
     expect(pl.turnIdx).toBe(0)
@@ -499,7 +499,7 @@ describe('大富翁', () => {
     const sum = pl.dice.values[0] + pl.dice.values[1]
     expect(sum).toBeGreaterThanOrEqual(2)
     expect(sum).toBeLessThanOrEqual(12)
-    expect(pl.pos[cur]).toBe(sum % 16)
+    expect(pl.pos[cur]).toBe(sum % 24)
     // 有待决定或掷出对子 → 还停在原队；否则轮到下一队
     if (pl.pending) {
       expect(pl.pending.teamId).toBe(cur)
@@ -530,7 +530,7 @@ describe('大富翁', () => {
     expect(reduce(rt, { t: 'richman:roll', actionId: aid() }, ADMIN).error?.code).toBe('pending')
     const r = reduce(rt, { t: 'richman:decide', accept: true, actionId: aid() }, { role: 'player', playerId: captain })
     expect(r.ok).toBe(true)
-    expect(pl.cash[a]).toBe(16)
+    expect(pl.cash[a]).toBe(21)
     expect(pl.owners[1]).toMatchObject({ teamId: a, level: 1 })
     expect(pl.pending).toBeNull()
     expect(pl.turnIdx).toBe(1)
@@ -545,7 +545,7 @@ describe('大富翁', () => {
     const pl = rt.state.currentStage!.payload
     expect(pl.order).toHaveLength(2)
     expect(pl.teams.every((t: { bot?: boolean }) => t.bot)).toBe(true)
-    expect(pl.cash['bot_0']).toBe(20)
+    expect(pl.cash['bot_0']).toBe(25)
     // 机器人回合由服务端以管理员身份代操作（连接层定时驱动）
     expect(reduce(rt, { t: 'richman:roll', actionId: aid() }, ADMIN).ok).toBe(true)
   })
@@ -567,25 +567,25 @@ describe('大富翁', () => {
   it('遥控骰子：精准走指定步数；成套地产收双倍租；免租卡自动免单', () => {
     const { rt, pl } = setupRichman()
     const [a, b] = pl.order as string[]
-    // a 队集齐「小吃街」成套（1 号奶茶店价 4 + 3 号小卖部价 5）
+    // a 队集齐「小吃街」成套（1 号奶茶店价 4 + 2 号小卖部价 5）
     pl.owners[1] = { teamId: a, level: 1 }
-    pl.owners[3] = { teamId: a, level: 1 }
+    pl.owners[2] = { teamId: a, level: 1 }
     pl.turnIdx = 1 // 轮到 b
     pl.items[b] = ['dice']
-    const r = reduce(rt, { t: 'richman:item', kind: 'dice', value: 3, actionId: aid() }, ADMIN)
+    const r = reduce(rt, { t: 'richman:item', kind: 'dice', value: 2, actionId: aid() }, ADMIN)
     expect(r.ok).toBe(true)
-    expect(pl.pos[b]).toBe(3)
+    expect(pl.pos[b]).toBe(2)
     expect(pl.items[b]).toEqual([]) // 道具已消耗
     // 成套租金：ceil(5/2)=3 再翻倍 = 6
-    expect(pl.cash[b]).toBe(20 - 6)
-    expect(pl.cash[a]).toBe(20 + 6)
+    expect(pl.cash[b]).toBe(25 - 6)
+    expect(pl.cash[a]).toBe(25 + 6)
     expect(pl.turnIdx).toBe(0) // 回合推进回 a
     // 免租卡：b 再次被遥控到 1 号（a 的成套地），自动免单
     pl.turnIdx = 1
     pl.pos[b] = 0
     pl.items[b] = ['dice', 'shield']
     reduce(rt, { t: 'richman:item', kind: 'dice', value: 1, actionId: aid() }, ADMIN)
-    expect(pl.cash[b]).toBe(14) // 没再扣钱
+    expect(pl.cash[b]).toBe(19) // 没再扣钱
     expect(pl.items[b]).toEqual([]) // 免租卡也消耗了
   })
 
@@ -599,11 +599,11 @@ describe('大富翁', () => {
     expect(pl.blocks[4]).toBe(true)
     expect(pl.turnIdx).toBe(0) // 没消耗回合
     expect(reduce(rt, { t: 'richman:item', kind: 'block', tileIdx: 4, actionId: aid() }, ADMIN).error?.code).toBe('no_item')
-    // a 用遥控骰子想走 6 步，在 4 号宝箱格撞路障急停（宝箱 +3）
+    // a 用遥控骰子想走 6 步，在 4 号烧烤摊撞路障急停（无主地 → 触发买地决定）
     reduce(rt, { t: 'richman:item', kind: 'dice', value: 6, actionId: aid() }, ADMIN)
     expect(pl.pos[a]).toBe(4)
     expect(pl.blocks[4]).toBeUndefined() // 路障一次性
-    expect(pl.cash[a]).toBe(23)
+    expect(pl.pending).toMatchObject({ tileIdx: 4, teamId: a, kind: 'buy' })
   })
 
   it('全员竞猜：猜中点数和的队 +1，每队每回合最多一次；本人进猜中名单', () => {
@@ -632,12 +632,13 @@ describe('大富翁', () => {
     const { rt, pl } = setupRichman()
     const [a] = pl.order as string[]
     const drawn: string[] = []
-    // 反复用遥控骰子精准踩 2 号机会格（10 号也是机会格，但固定踩 2 号最稳）
+    // 反复用遥控骰子精准踩 3 号机会格（清掉可能抽到的冻结，保证每轮都能用道具）
     for (let i = 0; i < 10; i++) {
       pl.turnIdx = 0
       pl.pos[a] = 0
       pl.items[a] = ['dice']
-      reduce(rt, { t: 'richman:item', kind: 'dice', value: 2, actionId: aid() }, ADMIN)
+      pl.frozen = {}
+      reduce(rt, { t: 'richman:item', kind: 'dice', value: 3, actionId: aid() }, ADMIN)
       expect(pl.card).toBeTruthy()
       expect(pl.card.kind).toBe('chance')
       expect(pl.card.text).toBeTruthy()
@@ -654,10 +655,44 @@ describe('大富翁', () => {
       else reduce(rt, { t: 'richman:roll', actionId: aid() }, ADMIN)
       for (const id of pl.order as string[]) {
         expect(pl.pos[id]).toBeGreaterThanOrEqual(0)
-        expect(pl.pos[id]).toBeLessThan(16)
+        expect(pl.pos[id]).toBeLessThan(24)
         expect(Number.isFinite(pl.cash[id])).toBe(true)
       }
     }
+  })
+
+  it('破产：欠债自动变卖地产抵债；卖光仍为负则出局；只剩一队自动结算', () => {
+    const { rt, pl } = setupRichman(6, 3)
+    const [a, b, c] = pl.order as string[]
+    // b 欠 4 金币但有一块投入 5 的地 → 自动变卖回正
+    pl.cash[b] = -4
+    pl.owners[2] = { teamId: b, level: 1 } // 小卖部 5
+    // c 欠债且无地 → 破产出局
+    pl.cash[c] = -3
+    const step = () => {
+      if (pl.pending) reduce(rt, { t: 'richman:decide', accept: false, actionId: aid() }, ADMIN)
+      else reduce(rt, { t: 'richman:roll', actionId: aid() }, ADMIN)
+    }
+    step() // 任意一步行动都会触发全队欠债清算
+    expect(pl.owners[2]).toBeUndefined()
+    expect(pl.cash[b]).toBe(1)
+    expect(pl.bankrupt[b]).toBeUndefined()
+    expect(pl.bankrupt[c]).toBe(true)
+    expect(pl.finished).toBe(false) // 还剩 a、b 两队
+    // b 也破产 → 只剩 a，自动结算
+    pl.cash[b] = -99
+    step()
+    expect(pl.bankrupt[b]).toBe(true)
+    expect(pl.finished).toBe(true)
+    expect(pl.ranking[0].id).toBe(a)
+  })
+
+  it('跑满圈数自动结算', () => {
+    const { rt, pl } = setupRichman()
+    pl.round = 11 // 超过 RICH_MAX_ROUNDS=10
+    if (!pl.pending) reduce(rt, { t: 'richman:roll', actionId: aid() }, ADMIN)
+    if (pl.pending) reduce(rt, { t: 'richman:decide', accept: false, actionId: aid() }, ADMIN)
+    expect(pl.finished).toBe(true)
   })
 
   it('结算：总资产 = 金币 + 地产投入，按降序排名；结算后禁止掷骰', () => {
@@ -666,11 +701,11 @@ describe('大富翁', () => {
     pl.cash[a] = 10
     pl.cash[b] = 31
     pl.owners[1] = { teamId: a, level: 2 }  // 奶茶店 4×2 = 8
-    pl.owners[15] = { teamId: a, level: 1 } // 游乐场 12
+    pl.owners[15] = { teamId: a, level: 1 } // 健身房 9
     reduce(rt, { t: 'richman:end', actionId: aid() }, ADMIN)
     expect(pl.finished).toBe(true)
     expect(pl.ranking[0]).toMatchObject({ id: b, total: 31 })
-    expect(pl.ranking[1]).toMatchObject({ id: a, cash: 10, assets: 20, total: 30 })
+    expect(pl.ranking[1]).toMatchObject({ id: a, cash: 10, assets: 17, total: 27 })
     expect(reduce(rt, { t: 'richman:roll', actionId: aid() }, ADMIN).error?.code).toBe('finished')
   })
 

@@ -695,9 +695,9 @@ button.nav-pill:active { transform: none; }
 .rm-stage { perspective: 980px; padding-bottom: 8px; max-width: 440px; margin: 0 auto; }
 .rm-board {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  grid-template-rows: repeat(5, minmax(0, 1fr));
-  gap: 5px;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-rows: repeat(7, minmax(0, 1fr));
+  gap: 3px;
   aspect-ratio: 1;
   margin: -12px 0 -14px;
   transform: rotateX(22deg) scale(.97);
@@ -742,12 +742,12 @@ button.nav-pill:active { transform: none; }
   line-height: 1;
   filter: drop-shadow(0 2px 2px rgba(0, 0, 0, .65));
 }
-.rm-icon { font-size: clamp(19px, 5.4vw, 24px); line-height: 1.15; }
+.rm-icon { font-size: clamp(15px, 4.2vw, 19px); line-height: 1.15; }
 .rm-name {
   max-width: 100%;
   overflow: hidden;
   white-space: nowrap;
-  font-size: clamp(9px, 2.6vw, 11px);
+  font-size: clamp(8px, 2.2vw, 10px);
   font-weight: 700;
   color: var(--text);
   opacity: .82;
@@ -766,7 +766,7 @@ button.nav-pill:active { transform: none; }
   transform-origin: 50% 100%;
 }
 .rm-center {
-  grid-area: 2 / 2 / 5 / 5;
+  grid-area: 2 / 2 / 7 / 7;
   display: grid;
   place-content: center;
   gap: 2px;

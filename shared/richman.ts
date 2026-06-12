@@ -10,22 +10,31 @@ export interface RichTile {
   price?: number // 仅 prop：买价 = 升级价
 }
 
-// 16 格环形棋盘，手机端渲染为 5×5 外圈（上 5 + 右 3 + 下 5 + 左 3）
+// 24 格环形棋盘，手机端渲染为 7×7 外圈（上 7 + 右 5 + 下 7 + 左 5）
+// 四角：起点 / 宝箱 / 拘留所 / 惩罚；12 块地产分 6 个同色组
 export const RICH_BOARD: RichTile[] = [
   { type: 'start', name: '起点', icon: '🚩' },
   { type: 'prop', name: '奶茶店', icon: '🧋', price: 4 },
-  { type: 'chance', name: '机会', icon: '❓' },
   { type: 'prop', name: '小卖部', icon: '🏪', price: 5 },
+  { type: 'chance', name: '机会', icon: '❓' },
+  { type: 'prop', name: '烧烤摊', icon: '🍢', price: 5 },
+  { type: 'prop', name: '火锅店', icon: '🍲', price: 7 },
   { type: 'gift', name: '篝火宝箱', icon: '🎁' },
   { type: 'prop', name: '网吧', icon: '🖥️', price: 6 },
-  { type: 'punish', name: '惩罚格', icon: '😈' },
-  { type: 'prop', name: '火锅店', icon: '🍲', price: 7 },
+  { type: 'chance', name: '机会', icon: '❓' },
+  { type: 'prop', name: '台球厅', icon: '🎱', price: 7 },
   { type: 'tax', name: '缴税', icon: '💸' },
   { type: 'prop', name: 'KTV', icon: '🎤', price: 8 },
+  { type: 'jail', name: '拘留所', icon: '🚔' },
+  { type: 'prop', name: '酒吧', icon: '🍻', price: 9 },
   { type: 'chance', name: '机会', icon: '❓' },
   { type: 'prop', name: '健身房', icon: '🏋️', price: 9 },
-  { type: 'jail', name: '拘留所', icon: '🚔' },
+  { type: 'prop', name: '游泳馆', icon: '🏊', price: 10 },
+  { type: 'tax', name: '缴税', icon: '💸' },
+  { type: 'punish', name: '惩罚格', icon: '😈' },
   { type: 'prop', name: '电影院', icon: '🎬', price: 10 },
+  { type: 'prop', name: '剧本杀', icon: '🕵️', price: 11 },
+  { type: 'chance', name: '机会', icon: '❓' },
   { type: 'punish', name: '惩罚格', icon: '😈' },
   { type: 'prop', name: '游乐场', icon: '🎡', price: 12 },
 ]
@@ -33,17 +42,20 @@ export const RICH_BOARD: RichTile[] = [
 // 同色成套：集齐一组两块地，组内过路费翻倍
 export interface RichGroup { name: string; color: string; tiles: number[] }
 export const RICH_GROUPS: RichGroup[] = [
-  { name: '小吃街', color: '#f472b6', tiles: [1, 3] },
-  { name: '不夜城', color: '#a3e635', tiles: [5, 7] },
-  { name: '欢唱里', color: '#38bdf8', tiles: [9, 11] },
-  { name: '游乐园', color: '#ffd23f', tiles: [13, 15] },
+  { name: '小吃街', color: '#f472b6', tiles: [1, 2] },
+  { name: '夜宵摊', color: '#fb923c', tiles: [4, 5] },
+  { name: '不夜城', color: '#a3e635', tiles: [7, 9] },
+  { name: '欢唱里', color: '#38bdf8', tiles: [11, 13] },
+  { name: '运动城', color: '#c084fc', tiles: [15, 16] },
+  { name: '游乐园', color: '#ffd23f', tiles: [19, 20] },
 ]
 export function richGroupOf(tileIdx: number): RichGroup | undefined {
   return RICH_GROUPS.find(x => x.tiles.includes(tileIdx))
 }
+// 游乐场（23）是独立地王：无组、价高、租贵
 
-export const RICH_START_CASH = 20 // 开局每队金币
-export const RICH_PASS_BONUS = 2  // 经过/落地起点奖励
+export const RICH_START_CASH = 25 // 开局每队金币（24 格棋盘地多，预算同步加）
+export const RICH_PASS_BONUS = 3  // 经过/落地起点奖励（一圈更长，奖励加码）
 export const RICH_GIFT_BONUS = 3  // 宝箱格
 export const RICH_TAX = 3         // 缴税格
 export const RICH_MAX_LEVEL = 2   // 地产最高 2 级（豪华店）
@@ -51,6 +63,7 @@ export const RICH_BAIL_COST = 2   // 拘留所保释费
 export const RICH_GUESS_BONUS = 1 // 猜中骰子点数的队伍奖励（每队每回合最多一次）
 export const RICH_MAX_ITEMS = 2   // 每队道具上限，超出折现
 export const RICH_DOUBLE_JAIL = 3 // 连掷 N 次对子直接进拘留所
+export const RICH_MAX_ROUNDS = 10 // 跑满 N 圈自动结算（防止无限对局）
 
 // 过路费：1 级半价取整、2 级全价；同组成套再翻倍
 export function richRent(price: number, level: number, hasSet = false): number {

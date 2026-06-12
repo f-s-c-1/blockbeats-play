@@ -11,7 +11,7 @@ import { PUNISHMENTS } from '../../shared/games'
 import {
   RICH_BOARD, RICH_CHANCES, RICH_TOKENS, RICH_START_CASH, RICH_PASS_BONUS,
   RICH_GIFT_BONUS, RICH_TAX, RICH_MAX_LEVEL, RICH_BAIL_COST, RICH_GUESS_BONUS,
-  RICH_MAX_ITEMS, RICH_DOUBLE_JAIL, richRent, richGroupOf,
+  RICH_MAX_ITEMS, RICH_DOUBLE_JAIL, RICH_MAX_ROUNDS, richRent, richGroupOf,
 } from '../../shared/richman'
 
 const MAX_INBOX_MESSAGES = 200
@@ -107,13 +107,83 @@ function richEvent(pl: Record<string, any>, text: string, tone: 'good' | 'bad' |
   pl.log = [...(pl.log || []), text].slice(-8)
 }
 
-// 回合推进：清掉待决定；掷出对子的队再行动一次（bonus），否则轮到下一队
+// 回合推进：清掉待决定；掷出对子的队再行动一次（bonus），否则轮到下一队（跳过破产队）
 function richAdvance(pl: Record<string, any>) {
   pl.pending = null
-  if (pl.bonus) { pl.bonus = false; return }
+  pl.bankrupt ||= {}
+  if (pl.bonus) {
+    pl.bonus = false
+    if (!pl.bankrupt[pl.order[pl.turnIdx]]) return
+  }
   pl.streak = 0
-  pl.turnIdx = (pl.turnIdx + 1) % pl.order.length
-  if (pl.turnIdx === 0) pl.round++
+  const n = pl.order.length
+  for (let i = 0; i < n; i++) {
+    pl.turnIdx = (pl.turnIdx + 1) % n
+    if (pl.turnIdx === 0) pl.round++
+    if (!pl.bankrupt[pl.order[pl.turnIdx]]) break
+  }
+}
+
+// 欠债清算：金币为负的队自动从便宜的地产开始变卖（按投入价回收）；卖光仍为负 → 破产出局
+function richSettleDebts(pl: Record<string, any>, notes: string[]) {
+  pl.bankrupt ||= {}
+  for (const tid of pl.order as string[]) {
+    if (pl.cash[tid] >= 0 || pl.bankrupt[tid]) continue
+    const team = richTeam(pl, tid)
+    const mine = Object.entries(pl.owners as Record<string, { teamId: string; level: number }>)
+      .filter(([, o]) => o.teamId === tid)
+      .map(([idx, o]) => ({ idx: Number(idx), value: (RICH_BOARD[Number(idx)].price || 0) * o.level }))
+      .sort((x, y) => x.value - y.value)
+    const sold: string[] = []
+    while (pl.cash[tid] < 0 && mine.length) {
+      const p = mine.shift()!
+      delete pl.owners[p.idx]
+      pl.cash[tid] += p.value
+      sold.push(RICH_BOARD[p.idx].name)
+    }
+    if (sold.length) notes.push(`💥 ${team.token}${team.name} 资不抵债，变卖${sold.join('、')}抵债`)
+    if (pl.cash[tid] < 0) {
+      pl.bankrupt[tid] = true
+      notes.push(`🏚️ ${team.token}${team.name} 破产出局！`)
+    }
+  }
+}
+
+// 终局排名：金币 + 地产投入折算总资产
+function richRanking(pl: Record<string, any>) {
+  const assets: Record<string, number> = {}
+  for (const [idx, own] of Object.entries(pl.owners as Record<string, { teamId: string; level: number }>)) {
+    const price = RICH_BOARD[Number(idx)]?.price || 0
+    assets[own.teamId] = (assets[own.teamId] || 0) + price * own.level
+  }
+  return (pl.teams as { id: string; name: string; token: string }[])
+    .map(t => ({
+      id: t.id, name: t.name, token: t.token,
+      cash: pl.cash[t.id] ?? 0,
+      assets: assets[t.id] || 0,
+      total: (pl.cash[t.id] ?? 0) + (assets[t.id] || 0),
+    }))
+    .sort((a, b) => b.total - a.total)
+}
+
+function richFinish(pl: Record<string, any>, reason: string) {
+  const ranking = richRanking(pl)
+  pl.pending = null
+  pl.finished = true
+  pl.ranking = ranking
+  richEvent(pl, `🏁 ${reason}，自动结算！🏆 ${ranking[0].token}${ranking[0].name} 以总资产 ${ranking[0].total} 夺冠`)
+}
+
+// 终局判定：只剩一队存活或跑满圈数 → 自动结算
+function richMaybeFinish(pl: Record<string, any>) {
+  if (pl.finished) return
+  pl.bankrupt ||= {}
+  const alive = (pl.order as string[]).filter(id => !pl.bankrupt[id])
+  if (alive.length <= 1) {
+    richFinish(pl, alive.length === 1 ? `只剩 ${richTeam(pl, alive[0]).token}${richTeam(pl, alive[0]).name} 存活` : '全员破产')
+  } else if (pl.round > RICH_MAX_ROUNDS) {
+    richFinish(pl, `跑满 ${RICH_MAX_ROUNDS} 圈`)
+  }
 }
 
 // 全员竞猜结算：猜中点数和的玩家所在队 +1（每队每回合最多一次）；猜中名单回传给本人庆祝
@@ -260,6 +330,9 @@ function richResolveMove(s: RoomState, pl: Record<string, any>, cur: string, ste
       break
     }
   }
+  // 任何效果结算完都查一遍欠债（收租/缴税/机会卡都可能让某队负债）
+  richSettleDebts(pl, notes)
+  if (pl.bankrupt?.[cur]) { pl.pending = null; advance = true }
   return { advance, tone }
 }
 
@@ -706,6 +779,7 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
           pos: Object.fromEntries(order.map(id => [id, 0])),
           owners: {} as Record<string, { teamId: string; level: number }>,
           frozen: {} as Record<string, boolean>,
+          bankrupt: {} as Record<string, boolean>, // 破产出局的队（跳过回合）
           items: {} as Record<string, string[]>, // 每队道具袋
           blocks: {} as Record<string, boolean>, // 棋盘上的路障
           guesses: {} as Record<string, number>, // 本回合全员竞猜（playerId → 点数和）
@@ -738,12 +812,19 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
       if (err) return err
       const team = richTeam(pl, cur)
       const label = `${team.token}${team.name}`
+      if (pl.bankrupt?.[cur]) {
+        // 兜底：破产队不该轮到，直接跳过
+        richAdvance(pl)
+        richMaybeFinish(pl)
+        break
+      }
       if (pl.frozen[cur]) {
         delete pl.frozen[cur]
         pl.dice = null
         pl.bonus = false
         richEvent(pl, `❄️ ${label} 蹲完拘留所，本回合跳过`, 'bad')
         richAdvance(pl)
+        richMaybeFinish(pl)
         break
       }
       const v1 = randomBytes(4).readUInt32BE(0) % 6 + 1
@@ -762,6 +843,7 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
           notes.push('🚔 连掷三对开太快，被抓进拘留所！')
           richEvent(pl, notes.join('，'), 'bad')
           richAdvance(pl)
+          richMaybeFinish(pl)
           break
         }
         pl.bonus = true
@@ -770,6 +852,7 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
       const r = richResolveMove(s, pl, cur, sum, notes)
       richEvent(pl, notes.join('，'), r.tone)
       if (r.advance) richAdvance(pl)
+      richMaybeFinish(pl)
       break
     }
 
@@ -814,6 +897,7 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
         const r = richResolveMove(s, pl, cur, v!, notes)
         richEvent(pl, notes.join('，'), r.tone)
         if (r.advance) richAdvance(pl)
+        richMaybeFinish(pl)
       } else {
         const ti = ev.tileIdx
         if (!Number.isInteger(ti) || ti! < 1 || ti! >= RICH_BOARD.length) {
@@ -868,7 +952,12 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
       } else {
         richEvent(pl, `${team.token}${team.name} 放弃了${tile.icon}${tile.name}`, 'bad')
       }
+      // 决定后也清一遍欠债（防止此前堆积的负债漏判）
+      const settleNotes: string[] = []
+      richSettleDebts(pl, settleNotes)
+      if (settleNotes.length) richEvent(pl, settleNotes.join('，'), 'bad')
       richAdvance(pl)
+      richMaybeFinish(pl)
       break
     }
 
@@ -879,6 +968,7 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
       st.payload.bonus = false // 强制推进连对子奖励一起清掉
       richEvent(st.payload, '⏭️ 主持人推进了回合', 'bad')
       richAdvance(st.payload)
+      richMaybeFinish(st.payload)
       break
     }
 
@@ -886,24 +976,7 @@ export function reduce(rt: RoomRuntime, ev: ClientEvent, actor: Actor): ReduceRe
       const guard = adminOnly(); if (guard) return guard
       const st = s.currentStage
       if (!st || st.type !== 'richman') return { ok: false, error: { code: 'no_stage', message: '当前不在大富翁环节' } }
-      const pl = st.payload
-      const assets: Record<string, number> = {}
-      for (const [idx, own] of Object.entries(pl.owners as Record<string, { teamId: string; level: number }>)) {
-        const price = RICH_BOARD[Number(idx)]?.price || 0
-        assets[own.teamId] = (assets[own.teamId] || 0) + price * own.level
-      }
-      const ranking = (pl.teams as { id: string; name: string; token: string }[])
-        .map(t => ({
-          id: t.id, name: t.name, token: t.token,
-          cash: pl.cash[t.id] ?? 0,
-          assets: assets[t.id] || 0,
-          total: (pl.cash[t.id] ?? 0) + (assets[t.id] || 0),
-        }))
-        .sort((a, b) => b.total - a.total)
-      pl.pending = null
-      pl.finished = true
-      pl.ranking = ranking
-      richEvent(pl, `🏆 大富翁结束！${ranking[0].token}${ranking[0].name} 以总资产 ${ranking[0].total} 夺冠`)
+      richFinish(st.payload, '主持人鸣金收兵')
       break
     }
 

@@ -418,18 +418,19 @@ watch(() => rmc.value?.lastGuess as { sum: number; correct: string[] } | null, (
   }
 })
 
-// —— 骰子动画：rollId 变化时数字快速滚动 ~1.2s 再定格在服务端结果 ——
+// —— 骰子动画：rollId 变化时骰面快速翻滚 ~1.2s 再定格在服务端结果 ——
+// 骰子渲染为带点数的立方体（借鉴 mine-monopoly 的实体骰子），不再是文字
 const RM_DICE_MS = 1200 // 骰子滚动时长
 const RM_STEP_MS = 320  // 棋子每格耗时（放慢，配走格音）
-const rmDiceShow = ref('?')
+const rmDiceFaces = ref<number[]>([])
 const rmRolling = ref(false)
 let rmDiceTimer: ReturnType<typeof setInterval> | undefined
 let rmDiceStop: ReturnType<typeof setTimeout> | undefined
-const rmDiceText = computed(() => {
-  const vs = (rmc.value?.dice?.values || []) as number[]
-  if (!vs.length) return '–'
-  return vs.length === 2 ? `${vs[0]}+${vs[1]}=${vs[0] + vs[1]}` : `${vs[0]}`
-})
+// 骰面点位（3×3 宫格里哪些点亮）
+const RM_PIPS: Record<number, number[]> = {
+  1: [5], 2: [3, 7], 3: [3, 5, 7], 4: [1, 3, 7, 9], 5: [1, 3, 5, 7, 9], 6: [1, 3, 4, 6, 7, 9],
+}
+function rmPipOn(face: number, cell: number) { return RM_PIPS[face]?.includes(cell) || false }
 // 重连/中途加入时棋盘上已有历史骰子/卡片：标记一下，避免当成新事件重播
 let rmEnteredWithDice = false
 let rmCardSeen = ''
@@ -437,6 +438,7 @@ watch(() => pv.value?.stage?.type === 'richman', (on: boolean, was: boolean) => 
   if (on && !was) {
     rmEnteredWithDice = !!rmc.value?.dice
     rmCardSeen = rmc.value?.card?.id || ''
+    rmDiceFaces.value = (rmc.value?.dice?.values || []) as number[]
     rmItemMode.value = 'none'
     rmSelTile.value = null
   }
@@ -445,23 +447,26 @@ watch(() => rmc.value?.dice?.rollId as string | undefined, (rollId: string | und
   if (rmDiceTimer) clearInterval(rmDiceTimer)
   if (rmDiceStop) clearTimeout(rmDiceStop)
   const dice = rmc.value?.dice
-  if (!rollId || !dice) { rmRolling.value = false; return }
+  if (!rollId || !dice) { rmRolling.value = false; rmDiceFaces.value = []; return }
   if (rmEnteredWithDice) { rmEnteredWithDice = false; return }
   rmRolling.value = true
   play('dice')
-  const twin = (dice.values as number[]).length === 2
+  const n = (dice.values as number[]).length
   rmDiceTimer = setInterval(() => {
-    const a = Math.floor(Math.random() * 6) + 1
-    const b = Math.floor(Math.random() * 6) + 1
-    rmDiceShow.value = twin ? `${a}+${b}` : `${a}`
-  }, 80)
+    rmDiceFaces.value = Array.from({ length: n }, () => Math.floor(Math.random() * 6) + 1)
+  }, 90)
   rmDiceStop = setTimeout(() => {
     if (rmDiceTimer) clearInterval(rmDiceTimer)
+    rmDiceFaces.value = [...(dice.values as number[])]
     rmRolling.value = false
     const nav = navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean }
     nav.vibrate?.(60)
   }, RM_DICE_MS)
 })
+// 每队地产数（队伍条上显示 🏠n）
+function rmPropCount(teamId: string) {
+  return Object.values((rmc.value?.owners || {}) as Record<string, { teamId: string }>).filter(o => o.teamId === teamId).length
+}
 
 // —— 机会/惩罚卡：全屏翻卡展示（落格动画走完才亮出来）——
 const rmCardShow = ref<null | { kind: string; title: string; text: string }>(null)
@@ -954,23 +959,26 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
           </div>
         </template>
         <template v-else>
-          <div class="stage-kicker">大富翁 · 第 {{ rmc.round }} 圈 · 轮到 {{ rmTeam(rmCurrentTeam).token }}{{ rmTeam(rmCurrentTeam).name }}</div>
-          <p class="rm-event" :class="rmRolling ? '' : rmc.lastEvent?.tone">
-            {{ rmRolling ? '🎲 掷骰中…' : (rmc.lastEvent?.text || '') }}
-          </p>
+          <div class="stage-kicker">大富翁 · 第 {{ rmc.round }} 圈</div>
+          <div class="rm-turnbar" :style="{ borderColor: rmTeamColor(rmCurrentTeam || '') }">
+            <template v-if="rmRolling">🎲 掷骰中…</template>
+            <template v-else-if="rmMyTurn">{{ rmTeam(rmCurrentTeam).token }} 轮到你们队！{{ rmIsCaptain ? '队长就是你' : '盯紧队长' }}</template>
+            <template v-else>等 {{ rmTeam(rmCurrentTeam).token }}{{ rmTeam(rmCurrentTeam).name }} 行动</template>
+          </div>
+          <p v-if="!rmRolling && rmc.lastEvent" class="rm-event" :class="rmc.lastEvent.tone">{{ rmc.lastEvent.text }}</p>
           <p v-if="rmItemMode === 'block'" class="toast">🚧 点棋盘上的格子放路障（起点不行）<button class="sm ghost" style="margin-left:8px" @click="rmItemMode = 'none'">取消</button></p>
           <div class="rm-board">
             <div
               v-for="(tile, i) in RICH_BOARD"
               :key="i"
               class="rm-tile"
-              :class="{
+              :class="['rm-t-' + tile.type, {
                 owned: rmOwner(i),
                 selected: rmSelTile === i,
                 targetable: rmItemMode === 'block' && i !== 0 && !rmc.blocks?.[i],
                 landed: rmLandedTile === i,
                 here: rmTokensAt(i).some(tt => tt.id === rmCurrentTeam),
-              }"
+              }]"
               :style="rmCellStyle(i)"
               @click="rmTileTap(i)"
             >
@@ -984,7 +992,15 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
               </span>
             </div>
             <div class="rm-center">
-              <div class="rm-dice" :class="{ rolling: rmRolling }">🎲 {{ rmRolling ? rmDiceShow : rmDiceText }}</div>
+              <div class="rm-dice-row" :class="{ rolling: rmRolling }">
+                <template v-if="rmDiceFaces.length">
+                  <span v-for="(f, di) in rmDiceFaces" :key="di" class="dice-cube">
+                    <span v-for="c in 9" :key="c" class="pip" :class="{ on: rmPipOn(f, c) }" />
+                  </span>
+                  <span v-if="rmDiceFaces.length === 2 && !rmRolling" class="rm-dice-sum">={{ rmDiceFaces[0] + rmDiceFaces[1] }}</span>
+                </template>
+                <span v-else class="rm-dice">🎲</span>
+              </div>
               <p class="muted rm-turn">{{ rmMyTurn ? '轮到你们队！' : '点格子看行情' }}</p>
             </div>
           </div>
@@ -1002,6 +1018,7 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
             <span v-for="t in rmc.teams" :key="t.id" class="member" :style="{ borderColor: rmTeamColor(t.id) }">
               {{ t.token }}{{ t.name }}
               <strong :style="{ color: rmc.cash[t.id] < 0 ? 'var(--red)' : 'var(--gold)' }">💰{{ rmc.cash[t.id] }}</strong>
+              <span v-if="rmPropCount(t.id)" class="muted">🏠{{ rmPropCount(t.id) }}</span>
               <span v-for="(it, k) in rmc.items?.[t.id] || []" :key="k" :title="rmItemName(it)">{{ rmItemIcon(it) }}</span>
               <span v-if="rmc.frozen[t.id]" class="tag warn">🚔</span>
             </span>

@@ -770,11 +770,50 @@ button.nav-pill:active { transform: none; }
   color: var(--gold);
   font-variant-numeric: tabular-nums;
 }
-.rm-dice.rolling { animation: rmShake .12s linear infinite; }
-@keyframes rmShake {
-  0%, 100% { transform: rotate(-5deg) scale(1.04); }
-  50% { transform: rotate(5deg) scale(.98); }
+/* 实体骰子（带点数立方体，借鉴 mine-monopoly） */
+.rm-dice-row { display: flex; gap: 8px; align-items: center; justify-content: center; }
+.dice-cube {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  width: clamp(34px, 9vw, 44px);
+  aspect-ratio: 1;
+  padding: 5px;
+  background: linear-gradient(160deg, #fffdf6, #efe5cd);
+  border-radius: 9px;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .45), inset 0 -2px 0 rgba(0, 0, 0, .12);
 }
+.pip { width: 6px; height: 6px; border-radius: 50%; background: transparent; place-self: center; }
+.pip.on { background: #2b1602; }
+.rm-dice-sum { font-family: var(--font-display); font-size: 21px; color: var(--gold); }
+.rm-dice-row.rolling .dice-cube { animation: rmShake .14s linear infinite; }
+.rm-dice-row.rolling .dice-cube:nth-child(2) { animation-delay: .07s; }
+@keyframes rmShake {
+  0%, 100% { transform: rotate(-7deg) translateY(-1px); }
+  50% { transform: rotate(7deg) translateY(1px); }
+}
+
+/* 回合横幅：等谁行动一眼可见（队色描边） */
+.rm-turnbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--r);
+  background: rgba(0, 0, 0, .26);
+  font-weight: 800;
+  font-size: 16px;
+}
+
+/* 功能格按类型着色：一眼分清棋盘 */
+.rm-tile.rm-t-start { background: rgba(34, 197, 94, .17); }
+.rm-tile.rm-t-chance { background: rgba(168, 85, 247, .2); }
+.rm-tile.rm-t-gift { background: rgba(255, 210, 63, .16); }
+.rm-tile.rm-t-tax { background: rgba(245, 158, 11, .15); }
+.rm-tile.rm-t-jail { background: rgba(56, 189, 248, .15); }
+.rm-tile.rm-t-punish { background: rgba(239, 68, 68, .17); }
 .rm-turn { margin: 4px 0 0; font-size: 12px; }
 .rm-event {
   padding: 9px 12px;
@@ -884,7 +923,7 @@ button.nav-pill:active { transform: none; }
 .rm-card-text { font-size: 19px; font-weight: 800; line-height: 1.5; }
 
 @media (prefers-reduced-motion: reduce) {
-  .rm-dice.rolling, .rm-tile.targetable, .rm-tile.here, .rm-token-hop { animation: none; }
+  .rm-dice-row.rolling .dice-cube, .rm-tile.targetable, .rm-tile.here, .rm-token-hop { animation: none; }
   .rm-card-pop, .rm-card-mask { animation-duration: .01s; }
   .rm-tile.landed { animation: none; }
 }

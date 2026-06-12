@@ -783,9 +783,7 @@ function formatTime(ts: number) {
         </div>
         <div class="section-actions">
           <select v-model.number="teamCount">
-            <option :value="4">4 队</option>
-            <option :value="5">5 队</option>
-            <option :value="6">6 队</option>
+            <option v-for="n in 7" :key="n" :value="n + 1">{{ n + 1 }} 队</option>
           </select>
           <button class="sm" :disabled="members.length < teamCount" @click="generate">随机分队</button>
           <button class="sm warning" :disabled="!teams.length" @click="revealDraw">揭晓分组</button>

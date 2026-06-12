@@ -967,6 +967,7 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
           </div>
           <p v-if="!rmRolling && rmc.lastEvent" class="rm-event" :class="rmc.lastEvent.tone">{{ rmc.lastEvent.text }}</p>
           <p v-if="rmItemMode === 'block'" class="toast">🚧 点棋盘上的格子放路障（起点不行）<button class="sm ghost" style="margin-left:8px" @click="rmItemMode = 'none'">取消</button></p>
+          <div class="rm-stage">
           <div class="rm-board">
             <div
               v-for="(tile, i) in RICH_BOARD"
@@ -1003,6 +1004,7 @@ function remainSec(endsAt: number, paused: boolean, remaining: number) {
               </div>
               <p class="muted rm-turn">{{ rmMyTurn ? '轮到你们队！' : '点格子看行情' }}</p>
             </div>
+          </div>
           </div>
           <div v-if="rmTileInfo" class="panel rm-tileinfo">
             <strong>{{ rmTileInfo.tile.icon }}{{ rmTileInfo.tile.name }}</strong>
